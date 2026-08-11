@@ -1,0 +1,74 @@
+# Sistema Julia — stack (Express + Next/Tailwind/shadcn + PostgreSQL).
+# Publicado em https://sistema-julia-dev.webage.com.br pelo Cloudflare Tunnel
+# do WebAge Hub (1 regra de ingress → host.docker.internal:3503; o Next faz
+# proxy de /api/* para o backend Express).
+#
+# Portas no host: frontend 3503 · backend 4703 · postgres 5563.
+# (3500/4700/5560 são do sistema-arquitetura, 3501/… do guima, 3502/… do bruno.)
+name: sistema-julia
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sysjulia
+      POSTGRES_PASSWORD: sysjulia
+      POSTGRES_DB: sistema_julia
+    ports:
+      # Só no loopback: a porta existe para inspecionar o banco desta máquina.
+      # Publicada em 0.0.0.0, o Postgres ficaria alcançável por toda a rede
+      # local com uma senha que está versionada no repositório.
+      - "127.0.0.1:5563:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sysjulia -d sistema_julia"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "4700"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: sysjulia
+      DB_PASSWORD: sysjulia
+      DB_NAME: sistema_julia
+      JWT_SECRET: sistema-julia-troque-este-segredo-em-producao
+    ports:
+      # Loopback só. O frontend fala com o backend pela rede do compose
+      # (http://backend:4700); esta porta existe para depurar da própria máquina.
+      - "127.0.0.1:4703:4700"
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # O Next (server-side) faz proxy de /api/* para cá, dentro da rede do compose.
+      BACKEND_URL: http://backend:4700
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3503:3500"
+
+volumes:
+  db_data:
+
+# Subnet fixa: o pool default do Docker desta máquina está esgotado (muitos
+# sistemas rodando) e sem isto dá "all predefined address pools have been fully
+# subnetted". 10.201–10.205 já estão tomados; 10.206.0.0/24 está livre.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.206.0.0/24

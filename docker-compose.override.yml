@@ -1,0 +1,30 @@
+# Override de DESENVOLVIMENTO (aplicado automaticamente pelo `docker compose`).
+# Objetivo: hot-reload — alterações em backend/ e frontend/ refletem sem rebuild.
+#
+#   Uso normal (dev):  docker compose up -d
+#   Produção (sem hot-reload, build embutido na imagem):
+#                      docker compose -f docker-compose.yml up -d --build
+#
+# O código é bind-montado por cima de /app; um volume anônimo preserva o
+# node_modules já instalado na imagem. Como o repo vive no filesystem do Windows,
+# os eventos de arquivo não chegam ao container — por isso usamos POLLING.
+services:
+  backend:
+    # nodemon --legacy-watch faz polling; instalado em runtime (não está na imagem prod).
+    command: sh -c "npm install --no-save nodemon && npx nodemon --legacy-watch --watch . --ext js,json server.js"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  frontend:
+    command: npm run dev
+    environment:
+      BACKEND_URL: http://backend:4700
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Força o watcher do webpack/Next a usar polling (bind mount Windows).
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
