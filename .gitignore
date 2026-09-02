@@ -1,5 +1,9 @@
 node_modules
 .next
 backend/data
+backend/uploads
+scripts/tmp-fotos
+backend/tmp
+.env
 *.log
 .DS_Store

@@ -3,20 +3,36 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Users, Briefcase, LogOut, Building2 } from 'lucide-react'
+import { Users, Briefcase, LogOut, Building2, Home, ClipboardList, Bot, CalendarDays, Camera, Menu, X } from 'lucide-react'
 import { api, getToken, clearToken } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
+// Na ordem do trabalho: cadastra o cliente → o imóvel dele → a vistoria.
+// A agenda vem logo depois, por ser a visão do dia a dia sobre as vistorias.
 const NAV = [
-  { href: '/users', label: 'Usuários', icon: Users },
   { href: '/clients', label: 'Clientes', icon: Briefcase },
+  { href: '/imoveis', label: 'Imóveis', icon: Home },
+  // Viagens não fica no menu: é contexto da vistoria (aba dentro de Vistorias).
+  { href: '/vistorias', label: 'Vistorias', icon: ClipboardList },
+  { href: '/agenda', label: 'Agenda', icon: CalendarDays },
+  { href: '/users', label: 'Usuários', icon: Users },
+  // Ponte com o Claude Code do WebAge Hub — só faz sentido para quem administra.
+  { href: '/ia', label: 'IA', icon: Bot, adminOnly: true },
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [ready, setReady] = useState(false)
-  const [me, setMe] = useState<{ email: string } | null>(null)
+  const [me, setMe] = useState<{ id?: number; email: string; role?: string } | null>(null)
+  // No celular o menu é uma gaveta: fica fora da tela até o usuário abrir. Antes
+  // ele era uma coluna fixa de 240px que comia metade da largura do aparelho.
+  const [menu, setMenu] = useState(false)
+
+  // Navegou? A gaveta fecha sozinha — senão ela tampa a página que acabou de abrir.
+  useEffect(() => {
+    setMenu(false)
+  }, [pathname])
 
   useEffect(() => {
     if (!getToken()) {
@@ -24,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       return
     }
     api
-      .get<{ user: { email: string } }>('/me')
+      .get<{ user: { id?: number; email: string; role?: string } }>('/me')
       .then((r) => {
         setMe(r.user)
         setReady(true)
@@ -48,44 +64,104 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-60 flex-col border-r bg-card">
-        <div className="flex items-center gap-2 border-b px-5 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded bg-primary text-primary-foreground">
+      {/* Fundo escuro por trás da gaveta: tocar fora fecha o menu. */}
+      {menu && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden print:hidden"
+          onClick={() => setMenu(false)}
+          aria-hidden
+        />
+      )}
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col bg-sidebar text-sidebar-foreground transition-transform',
+          // No desktop volta a ser coluna do layout, sempre visível.
+          'lg:static lg:z-auto lg:translate-x-0 lg:transition-none print:hidden',
+          menu ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        <div className="flex items-center gap-2 border-b border-sidebar-border px-5 py-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded bg-primary text-primary-foreground">
             <Building2 className="h-5 w-5" />
           </div>
-          <span className="font-semibold">Sistema Julia</span>
+          <span className="font-semibold text-white">Sistema Julia</span>
+          <button
+            onClick={() => setMenu(false)}
+            className="-mr-2 ml-auto rounded-md p-2 hover:bg-white/10 hover:text-white lg:hidden"
+            aria-label="Fechar menu"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {/* Ação principal do sistema: é para isso que o app existe. */}
+        <div className="p-3 pb-0">
+          <Link
+            href="/iniciar"
+            className="flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+          >
+            <Camera className="h-5 w-5" /> Iniciar vistoria
+          </Link>
         </div>
         <nav className="flex-1 space-y-1 p-3">
-          {NAV.map((item) => {
-            const active = pathname.startsWith(item.href)
+          {NAV.filter((item) => !item.adminOnly || me?.role === 'admin').map((item) => {
+            // /viagens vive dentro de Vistorias — mantém o item aceso.
+            const active =
+              pathname.startsWith(item.href) || (item.href === '/vistorias' && pathname.startsWith('/viagens'))
             const Icon = item.icon
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                // Item aceso: fundo claro + barra vermelha na borda. O vermelho
+                // fica no ícone e na barra; o botão cheio é só da ação principal.
                 className={cn(
-                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'flex items-center gap-3 rounded-md border-l-[3px] py-2.5 pl-3 pr-3 text-sm font-medium transition-colors',
                   active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                    ? 'border-primary bg-white/10 text-white'
+                    : 'border-transparent hover:bg-white/5 hover:text-white'
                 )}
               >
-                <Icon className="h-4 w-4" /> {item.label}
+                <Icon className={cn('h-5 w-5 shrink-0', active ? 'text-primary' : 'text-zinc-500')} />
+                {item.label}
               </Link>
             )
           })}
         </nav>
-        <div className="border-t p-3">
-          <div className="mb-2 truncate px-2 text-xs text-muted-foreground">{me?.email}</div>
+        <div className="border-t border-sidebar-border p-3">
+          {/* Atalho para a agenda só do usuário logado (a geral fica no menu). */}
+          {me?.id && (
+            <Link
+              href={`/agenda?responsavel=${me.id}`}
+              className="mb-2 flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-white/5 hover:text-white"
+            >
+              <CalendarDays className="h-4 w-4 text-zinc-500" /> Minha agenda
+            </Link>
+          )}
+          <div className="mb-2 truncate px-2 text-xs text-zinc-500">{me?.email}</div>
           <button
             onClick={logout}
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-white/5 hover:text-white"
           >
-            <LogOut className="h-4 w-4" /> Sair
+            <LogOut className="h-4 w-4 text-zinc-500" /> Sair
           </button>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto p-8">{children}</main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Barra do celular: é daqui que o menu sai e volta. */}
+        <div className="sticky top-0 z-30 flex items-center gap-2 bg-sidebar px-2 py-2 text-white lg:hidden print:hidden">
+          <button onClick={() => setMenu(true)} className="rounded-md p-2 hover:bg-white/10" aria-label="Abrir menu">
+            <Menu className="h-6 w-6" />
+          </button>
+          <span className="font-semibold">Sistema Julia</span>
+          <Link
+            href="/iniciar"
+            className="ml-auto flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+          >
+            <Camera className="h-4 w-4" /> Vistoria
+          </Link>
+        </div>
+        <main className="flex-1 overflow-auto p-4 lg:p-8 print:overflow-visible print:p-0">{children}</main>
+      </div>
     </div>
   )
 }

@@ -9,9 +9,11 @@ const buttonVariants = cva(
       variant: {
         default: 'bg-primary text-primary-foreground hover:bg-primary/90',
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
-        outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground',
+        outline: 'border border-input bg-card text-foreground shadow-sm hover:border-foreground/40 hover:bg-accent',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-        ghost: 'hover:bg-accent hover:text-accent-foreground',
+        // Fantasma não é invisível: o ícone fica em cinza legível e ganha
+        // contorno ao passar o mouse. Era aqui que as ações das tabelas sumiam.
+        ghost: 'text-muted-foreground hover:bg-accent hover:text-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {

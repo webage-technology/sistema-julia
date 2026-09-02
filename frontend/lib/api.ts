@@ -51,9 +51,41 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return json as T
 }
 
+// Envio de arquivos (FormData) — sem Content-Type manual (o navegador define o boundary).
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const token = getToken()
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+    cache: 'no-store',
+  })
+  let json: any = null
+  try {
+    json = await res.json()
+  } catch {
+    /* corpo vazio */
+  }
+  if (!res.ok) {
+    const err = new Error(json?.message || `Erro ${res.status}`) as ApiError
+    err.status = res.status
+    err.body = json
+    throw err
+  }
+  return json as T
+}
+
+// URL com o token na query — para <img src>, <a download> e novas abas, onde
+// não dá para enviar o header Authorization (o backend aceita ?token=).
+export function apiUrl(path: string): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `/api${path}${sep}token=${encodeURIComponent(getToken() || '')}`
+}
+
 export const api = {
   get: <T = any>(path: string) => request<T>('GET', path),
   post: <T = any>(path: string, body?: unknown) => request<T>('POST', path, body),
   put: <T = any>(path: string, body?: unknown) => request<T>('PUT', path, body),
   del: <T = any>(path: string) => request<T>('DELETE', path),
+  upload: <T = any>(path: string, form: FormData) => requestForm<T>(path, form),
 }

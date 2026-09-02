@@ -23,7 +23,9 @@ export default function LoginPage() {
     try {
       const res = await api.post<{ token: string }>('/login', { email, password })
       setToken(res.token)
-      router.push('/users')
+      // ?next= permite voltar direto para a tela de captura após o login no celular.
+      const next = new URLSearchParams(window.location.search).get('next')
+      router.push(next && next.startsWith('/') ? next : '/vistorias')
     } catch (err: any) {
       setError(err?.message || 'Falha ao entrar')
     } finally {

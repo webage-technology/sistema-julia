@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { CalendarDays, Plus, Pencil, Search, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useParamEstado, useTitulo } from '@/lib/url'
+import { filtrarPorTexto } from '@/lib/vistorias'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,36 +24,42 @@ interface User {
 const EMPTY = { name: '', email: '', password: '', role: 'user' }
 
 export default function UsersPage() {
+  const router = useRouter()
   const [rows, setRows] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState<User | null>(null)
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // O formulário tem endereço próprio: ?novo=1 ou ?editar=<id>.
+  const [novo, setNovo] = useParamEstado('novo')
+  const [editarId, setEditarId] = useParamEstado('editar')
+  const [busca, setBusca] = useParamEstado('busca')
+  const visiveis = useMemo(() => filtrarPorTexto(rows, busca || '', (u) => [u.name, u.email, u.role]), [rows, busca])
+  const editing = rows.find((u) => String(u.id) === editarId) || null
+  const open = novo === '1' || !!editing
+  useTitulo(novo === '1' ? 'Novo usuário' : editing ? `Editar ${editing.name}` : 'Usuários')
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true)
     api
       .get<{ data: User[] }>('/users')
       .then((r) => setRows(r.data))
       .finally(() => setLoading(false))
-  }
+  }, [])
   useEffect(() => {
     load()
-  }, [])
+  }, [load])
 
-  const openNew = () => {
-    setEditing(null)
-    setForm(EMPTY)
+  // Ao abrir (inclusive por link direto ou voltar), preenche o formulário.
+  useEffect(() => {
     setError(null)
-    setOpen(true)
-  }
-  const openEdit = (u: User) => {
-    setEditing(u)
-    setForm({ name: u.name, email: u.email, password: '', role: u.role })
-    setError(null)
-    setOpen(true)
+    if (novo === '1') setForm(EMPTY)
+    else if (editing) setForm({ name: editing.name, email: editing.email, password: '', role: editing.role })
+  }, [novo, editing?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fechar = () => {
+    if (novo === '1') setNovo(null)
+    else setEditarId(null)
   }
 
   const save = async (e: React.FormEvent) => {
@@ -62,7 +71,7 @@ export default function UsersPage() {
       if (form.password) body.password = form.password
       if (editing) await api.put(`/users/${editing.id}`, body)
       else await api.post('/users', { ...body, password: form.password })
-      setOpen(false)
+      fechar()
       load()
     } catch (err: any) {
       setError(err?.message || 'Erro ao salvar')
@@ -88,9 +97,19 @@ export default function UsersPage() {
           <h1 className="text-2xl font-semibold">Usuários</h1>
           <p className="text-sm text-muted-foreground">Gerencie os usuários do sistema.</p>
         </div>
-        <Button onClick={openNew}>
+        <Button onClick={() => setNovo('1')}>
           <Plus className="h-4 w-4" /> Novo usuário
         </Button>
+      </div>
+
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="pl-9"
+          placeholder="Buscar por nome, e-mail ou papel…"
+          value={busca || ''}
+          onChange={(e) => setBusca(e.target.value || null)}
+        />
       </div>
 
       <Card>
@@ -100,7 +119,7 @@ export default function UsersPage() {
               <TableHead>Nome</TableHead>
               <TableHead>E-mail</TableHead>
               <TableHead>Papel</TableHead>
-              <TableHead className="w-24 text-right">Ações</TableHead>
+              <TableHead className="w-32 text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -110,14 +129,14 @@ export default function UsersPage() {
                   Carregando…
                 </TableCell>
               </TableRow>
-            ) : rows.length === 0 ? (
+            ) : visiveis.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  Nenhum usuário cadastrado.
+                  {busca ? `Nenhum usuário para “${busca}”.` : 'Nenhum usuário cadastrado.'}
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((u) => (
+              visiveis.map((u) => (
                 <TableRow key={u.id}>
                   <TableCell className="font-medium">{u.name}</TableCell>
                   <TableCell className="text-muted-foreground">{u.email}</TableCell>
@@ -125,7 +144,15 @@ export default function UsersPage() {
                     <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">{u.role}</span>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={`Agenda de ${u.name}`}
+                      onClick={() => router.push(`/agenda?responsavel=${u.id}`)}
+                    >
+                      <CalendarDays className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => setEditarId(String(u.id))}>
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => remove(u)}>
@@ -139,7 +166,7 @@ export default function UsersPage() {
         </Table>
       </Card>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(o) => !o && fechar()}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? 'Editar usuário' : 'Novo usuário'}</DialogTitle>
@@ -178,7 +205,7 @@ export default function UsersPage() {
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              <Button type="button" variant="outline" onClick={fechar}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={saving}>

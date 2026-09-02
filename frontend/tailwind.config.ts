@@ -17,6 +17,11 @@ const config: Config = {
         muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
         accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
         card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' },
+        sidebar: {
+          DEFAULT: 'hsl(var(--sidebar))',
+          foreground: 'hsl(var(--sidebar-foreground))',
+          border: 'hsl(var(--sidebar-border))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

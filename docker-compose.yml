@@ -43,10 +43,23 @@ services:
       DB_PASSWORD: sysjulia
       DB_NAME: sistema_julia
       JWT_SECRET: sistema-julia-troque-este-segredo-em-producao
+      # Ponte para o Claude Code do WebAge Hub (backend do Hub roda no HOST:4601).
+      # A chave vem do arquivo .env ao lado deste compose (não versionado) —
+      # veja .env.example e docs/integracao-webage-hub.md.
+      HUB_URL: ${HUB_URL:-http://host.docker.internal:4601}
+      HUB_INTEGRATION_KEY: ${HUB_INTEGRATION_KEY:-}
+    extra_hosts:
+      # Alcança o backend do Hub, que roda fora do Docker (precisa de git + claude CLI).
+      - "host.docker.internal:host-gateway"
     ports:
       # Loopback só. O frontend fala com o backend pela rede do compose
       # (http://backend:4700); esta porta existe para depurar da própria máquina.
       - "127.0.0.1:4703:4700"
+    volumes:
+      # Fotos e plantas das vistorias. Volume nomeado: sobrevive a rebuilds e,
+      # em dev, monta POR CIMA do bind ./backend:/app (os arquivos ficam aqui,
+      # não no filesystem do Windows).
+      - uploads_data:/app/uploads
 
   frontend:
     build:
@@ -63,6 +76,7 @@ services:
 
 volumes:
   db_data:
+  uploads_data:
 
 # Subnet fixa: o pool default do Docker desta máquina está esgotado (muitos
 # sistemas rodando) e sem isto dá "all predefined address pools have been fully
