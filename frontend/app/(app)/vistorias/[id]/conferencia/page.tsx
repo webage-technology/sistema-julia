@@ -3,14 +3,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Maximize2, Pencil, Plus, Save, Star, Trash2, X } from 'lucide-react'
+import { ArrowLeft, MapPin, Maximize2, Pencil, PenLine, Plus, QrCode, Save, Star, Trash2, X } from 'lucide-react'
 import { api, apiUrl } from '@/lib/api'
 import { useParamEstado, useTitulo } from '@/lib/url'
-import { Foto, SELECT_CLASS, VistoriaDetalhe, ambientesAchatados, corDoAmbiente } from '@/lib/vistorias'
+import {
+  Foto,
+  SELECT_CLASS,
+  Separacao,
+  VistoriaDetalhe,
+  ambientesAchatados,
+  corDoAmbiente,
+  resumoSeparacao,
+  separarPorCartoes,
+} from '@/lib/vistorias'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { AnotarFoto } from '@/components/anotar-foto'
 
 // Modelo da conferência: a fita segue a ordem do caminho (cronológica). A Julia
 // seleciona um ambiente e clica na PRIMEIRA foto dele — todas as seguintes
@@ -30,6 +40,12 @@ export default function ConferenciaPage() {
   const [salvando, setSalvando] = useState(false)
   const [ren, setRen] = useState<{ id: number; nome: string } | null>(null)
   const [novo, setNovo] = useState<{ pavimentoId: string; nome: string } | null>(null)
+  // Anotação (setas/círculos) sobre a foto ampliada; `versao` força o
+  // navegador a buscar a imagem de novo depois que o backend a regera.
+  const [anotando, setAnotando] = useState(false)
+  const [versao, setVersao] = useState(0)
+  const [separando, setSeparando] = useState(false)
+  const [separacao, setSeparacao] = useState<Separacao | null>(null)
 
   const load = useCallback(async () => {
     const [d, f] = await Promise.all([
@@ -168,6 +184,17 @@ export default function ConferenciaPage() {
     setSelecionado(r.data.id)
   }
 
+  // Fotos que chegaram sem ambiente → ambiente do último cartão (QR) antes delas.
+  const separar = async () => {
+    setSeparando(true)
+    try {
+      setSeparacao(await separarPorCartoes(id))
+      await load()
+    } finally {
+      setSeparando(false)
+    }
+  }
+
   const semAmbiente = contagem.get(null) || 0
 
   return (
@@ -234,6 +261,21 @@ export default function ConferenciaPage() {
           >
             <Plus className="h-4 w-4" /> Novo ambiente
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={separar}
+            disabled={separando || alteradas.length > 0}
+            title={
+              alteradas.length > 0
+                ? 'Salve os ajustes antes'
+                : 'Coloca as fotos sem ambiente no ambiente do último cartão de claquete (QR) fotografado antes delas'
+            }
+          >
+            <QrCode className="h-4 w-4" /> {separando ? 'Separando…' : 'Separar pelos cartões (QR)'}
+          </Button>
+          {separacao && <p className="text-xs text-muted-foreground">{resumoSeparacao(separacao)}</p>}
           <Button className="w-full" onClick={salvar} disabled={salvando || alteradas.length === 0}>
             <Save className="h-4 w-4" />
             {salvando ? 'Salvando…' : alteradas.length > 0 ? `Salvar (${alteradas.length})` : 'Tudo salvo'}
@@ -261,7 +303,7 @@ export default function ConferenciaPage() {
                 <div className="h-1.5 w-full" style={{ background: cor }} />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={apiUrl(`/fotos/${f.id}/thumb`)}
+                  src={`${apiUrl(`/fotos/${f.id}/thumb`)}?v=${versao}`}
                   alt={`Foto ${f.ordem}`}
                   loading="lazy"
                   className="aspect-[4/3] w-full object-cover"
@@ -270,12 +312,20 @@ export default function ConferenciaPage() {
                   {f.ordem}
                 </span>
                 {f.claquete && (
-                  <span className="absolute right-1 top-2.5 rounded bg-black/60 px-1 text-[10px] font-semibold text-amber-300">
-                    C
+                  <span
+                    className="absolute right-1 top-2.5 rounded bg-black/60 px-1 text-[10px] font-semibold text-amber-300"
+                    title={f.cartao ? 'Cartão de claquete lido pelo QR' : 'Claquete'}
+                  >
+                    {f.cartao ? 'QR' : 'C'}
                   </span>
                 )}
                 {f.destaque && (
                   <Star className="absolute right-1 top-8 h-3.5 w-3.5 fill-amber-400 text-amber-400 drop-shadow" />
+                )}
+                {f.temAnotacao && (
+                  <span className="absolute right-1 top-14 rounded bg-primary px-1 text-[10px] font-semibold text-white" title="Com anotação">
+                    A
+                  </span>
                 )}
                 {fronteira && (
                   <span
@@ -313,7 +363,15 @@ export default function ConferenciaPage() {
       </div>
 
       {/* Zoom / edição de uma foto */}
-      <Dialog open={!!zoom} onOpenChange={(o) => !o && setZoom(null)}>
+      <Dialog
+        open={!!zoom}
+        onOpenChange={(o) => {
+          if (!o) {
+            setAnotando(false)
+            setZoom(null)
+          }
+        }}
+      >
         <DialogContent className="max-w-3xl">
           {zoom && (
             <>
@@ -323,8 +381,36 @@ export default function ConferenciaPage() {
                   {zoom.capturadaEm ? ` · ${new Date(zoom.capturadaEm).toLocaleString('pt-BR')}` : ''}
                 </DialogTitle>
               </DialogHeader>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={apiUrl(`/fotos/${zoom.id}/web`)} alt={`Foto ${zoom.ordem}`} className="max-h-[60vh] w-full rounded object-contain" />
+              {anotando ? (
+                <AnotarFoto
+                  fotoId={zoom.id}
+                  src={`${apiUrl(`/fotos/${zoom.id}/web`)}?v=${versao}`}
+                  temAnotacao={!!zoom.temAnotacao}
+                  onFechar={() => setAnotando(false)}
+                  onSalvo={async () => {
+                    setAnotando(false)
+                    setVersao((v) => v + 1)
+                    const f = await api.get<{ data: Foto[] }>(`/vistorias/${id}/fotos`)
+                    setFotos(f.data)
+                  }}
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={`${apiUrl(`/fotos/${zoom.id}/web`)}?v=${versao}`} alt={`Foto ${zoom.ordem}`} className="max-h-[60vh] w-full rounded object-contain" />
+              )}
+              {(zoom.latitude != null || zoom.capturadaEm) && !anotando && (
+                <p className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  {zoom.latitude != null && zoom.longitude != null && (
+                    <a href={`https://www.google.com/maps?q=${zoom.latitude},${zoom.longitude}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">
+                      <MapPin className="h-3 w-3" /> {Number(zoom.latitude).toFixed(5)}, {Number(zoom.longitude).toFixed(5)}
+                      {zoom.precisao ? ` (±${Math.round(zoom.precisao)} m)` : ''}
+                    </a>
+                  )}
+                  {zoom.carimbada && <span>carimbada</span>}
+                  {zoom.temAnotacao && <span>com anotação</span>}
+                </p>
+              )}
+              {!anotando && (
               <div className="flex flex-wrap items-center gap-3">
                 <div className="min-w-48 flex-1 space-y-1.5">
                   <Label>Ambiente (só esta foto)</Label>
@@ -349,13 +435,19 @@ export default function ConferenciaPage() {
                   <input type="checkbox" checked={zoom.destaque} onChange={() => toggleFlag(zoom, 'destaque')} />
                   Destaque/patologia
                 </label>
+                <Button variant="outline" size="sm" onClick={() => setAnotando(true)}>
+                  <PenLine className="h-4 w-4" /> {zoom.temAnotacao ? 'Editar anotação' : 'Anotar'}
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => excluirFoto(zoom)}>
                   <Trash2 className="h-4 w-4 text-destructive" /> Excluir
                 </Button>
               </div>
+              )}
+              {!anotando && (
               <p className="text-xs text-muted-foreground">
                 A troca de ambiente aqui vale só para esta foto e entra na lista do “Salvar”.
               </p>
+              )}
             </>
           )}
         </DialogContent>

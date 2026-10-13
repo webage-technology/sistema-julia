@@ -81,6 +81,15 @@
 
 Cartões de **claquete-QR** imprimíveis por ambiente, gerados pelo sistema. Se Julia preferir a câmera nativa do iPhone (ou o app falhar no meio da vistoria): fotografa o cartão ao entrar em cada ambiente, as fotos chegam pelo iCloud como hoje, sobem em lote e o sistema separa tudo sozinho lendo os códigos.
 
+**Implementado em 07/10/2026** (`backend/src/claquete-qr.js`):
+
+- **Leitura no upload:** toda foto que chega sem ambiente (Enviar fotos (lote), Importar → fotos soltas) passa pelo `jsqr` (1600px e, se não achar, 2400px; ~50–150 ms por foto). Achou `SJ-AMB:<id>` ou `SJ-NOVO`, a foto vira **claquete** (fora do laudo, sem carimbo) e o texto fica em `fotos.qr`. QR de outra coisa (etiqueta de máquina, extintor) é ignorado.
+- **Separação** (`POST /vistorias/:id/fotos/separar`, roda sozinha no fim do lote e pelo botão **Separar pelos cartões (QR)** da conferência): na ordem do caminho, tudo depois de um cartão vai para o ambiente dele até o próximo cartão. Só preenche foto **sem** ambiente (ajuste manual não é desfeito; `refazer: true` reatribui tudo). A cada **novo dia** o ambiente atual zera — a primeira foto do dia precisa ser um cartão. Rodar duas vezes não duplica nada.
+- **Cartão "Novo ambiente" (`SJ-NOVO`):** genérico e reutilizável; cada vez que aparece abre um "Novo N" (`nomear_depois`, origem campo) no pavimento do ambiente atual — renomeado na conferência olhando a foto do cartão (o nome vai escrito à caneta). Duas fotos seguidas do cartão = o mesmo ambiente.
+- **Cartão de outra vistoria** (reaproveitado do mesmo imóvel): acha o ambiente pelo nome (e pavimento); se não existir, cria.
+- **Cartões impressos** (`/vistorias/:id/claquetes`): QR de 42 mm, instruções de uso e 4 cartões "Novo ambiente".
+- **Sem impressora:** dá para fotografar o QR aberto na tela de outro celular (não testado em campo ainda); e sem cartão nenhum vale a conferência por fronteiras (Fase 1).
+
 ### Piloto
 
 A primeira vistoria real com o PWA no iPhone 16 é o teste que decide se o PWA basta ou se vale embalar as mesmas telas num app nativo. Critérios de avaliação: velocidade entre fotos, qualidade em ambiente escuro, conforto de uso.
@@ -118,7 +127,7 @@ Link privado hospedado no próprio Sistema Julia, enviado ao cliente:
 
 - **Planta interativa com pinos** — no cadastro, um pino por ambiente sobre a planta; em campo, trocar de ambiente tocando no pino; no tour, vira o modo planta.
 - **Troca de ambiente por voz** ("cozinha") durante a captura.
-- **Leitura automática das claquetes-QR** / pré-marcação de fronteiras na conferência.
+- ~~**Leitura automática das claquetes-QR**~~ — feita em 07/10/2026 (ver "Plano B permanente"). Falta: pré-marcar fronteiras na conferência para fotos **sem** cartão.
 - **Assinatura digital gov.br/ICP-Brasil** no PDF emitido.
 - **Checklists por tipo de serviço** — ex.: itens de bombeiro (extintores, sinalização, rotas de fuga) marcáveis por ambiente, com foto vinculada.
 - **Comparação entre vistorias do mesmo imóvel** — lado a lado, ambiente por ambiente (o modelo de ambientes do imóvel torna isso possível). Diferencial para o serviço de **atualização**.

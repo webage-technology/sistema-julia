@@ -13,6 +13,10 @@ export interface ItemPersistido {
   destaque: boolean
   blob: Blob
   criadaEm: string
+  // Posição do aparelho na hora do disparo (quando o GPS estava disponível).
+  latitude?: number | null
+  longitude?: number | null
+  precisao?: number | null
 }
 
 const DB_NOME = 'sistema-julia-captura'

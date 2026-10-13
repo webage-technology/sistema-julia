@@ -9,16 +9,31 @@
 
 | URL | Tela |
 |---|---|
-| `/` | redireciona para `/vistorias` |
+| `/` | redireciona para `/painel` |
+| `/painel` | **painel**: sua próxima vistoria, próximas vistorias, relatórios pendentes, prazos da semana, processos por etapa, documentos faltando, verba de viagem, laudos, backup |
+| `/processos` | processos em quadro por etapa (`?ver=lista` para a tabela; `?etapa=`, `?responsavel=`, `?arquivados=1`) |
+| `/processos/:id` | o processo; abas em `?aba=protocolos` · `documentos` · `arquivos` · `vistorias` · `rrt` · `financeiro` (despesas) · `historico` |
+| `/financeiro` | verba das viagens: valor disponibilizado ao analista, dias em campo, gasto por categoria e planilha de despesas (`?inicio=&fim=&analista=`) |
+| `/notificacoes` | todos os avisos (`?todas=1` inclui os lidos) |
+| `/configuracoes` | escritório (só admin); abas `?aba=textos` · `documentos` · `checklists` · `notificacoes` · `backup` (`?limpar=1` abre a limpeza de dados) |
+| `/auditoria` | quem fez o quê (`?busca=`, `?entidade=`, `?usuario=`) |
+| `/lixeira` | excluídos para restaurar ou apagar de vez |
+| `/imoveis/:id/comparar?a=&b=` | comparação entre duas vistorias do imóvel |
+| `/esqueci-senha` · `/redefinir-senha?token=` | recuperação de senha (sem login) |
+| `/portal/:token` · `/portal/:token/tour/:vistoriaId` | portal do cliente e tour das fotos (sem login da equipe) |
 | `/iniciar` | **iniciar vistoria** — porta de entrada do trabalho de campo (é o `start_url` do app no celular) |
 | `/login` | entrar (aceita `?next=/captura/12` para voltar ao destino após o login) |
 | `/agenda` | agenda geral: vistorias + trechos de viagem, com filtros |
 | `/vistorias` | lista de vistorias |
 | `/vistorias/:id` | a vistoria (ações, pavimentos e ambientes) |
 | `/vistorias/:id/conferencia` | conferência das fotos (fita cronológica) |
-| `/vistorias/:id/relatorio` | aba Relatório: tipo da vistoria e laudo (EVTL) |
+| `/vistorias/:id/relatorio` | aba Relatório: tipo da vistoria, os modelos de laudo (EVTL, LIP, fotográfico) e, no fim, baixar em PDF ou Word |
+| `/vistorias/:id/importar` | importar vistoria já realizada (pasta de fotos → ambientes) |
 | `/vistorias/:id/claquetes` | cartões de claquete para imprimir |
-| `/viagens` | viagens (cada uma cobre várias vistorias) |
+| `/relatorios` | **área de Relatórios** — todos os relatórios do escritório |
+| `/relatorios/:id` | o documento: capa, texto livre e as fotos com legenda |
+| `/relatorios/modelos` | **biblioteca de modelos** — os .docx do escritório e os campos que o sistema preenche |
+| `/viagens` | **Cronograma** (aba de Vistorias): as idas a campo, cada uma cobrindo várias vistorias |
 | `/viagens/:id` | a viagem: vistorias, cronograma, verba e prestação de contas |
 | `/imoveis` | lista de imóveis |
 | `/imoveis/:id` | o imóvel (planta e modelo de ambientes) |
@@ -31,10 +46,26 @@
 
 | URL | O que abre |
 |---|---|
+| `/processos?novo=1` | novo processo |
+| `/processos/:id?protocolo=novo` · `?protocolo=12` | novo protocolo · editar o 12 |
+| `/processos/:id?rrt=nova` · `?despesa=1` · `?documento=1` · `?vincular=1` · `?arquivo=novo` | diálogos do processo |
+| `/imoveis/:id?aba=planta` · `?aba=arquivos` | planta com pinos · arquivos do imóvel |
+| `/imoveis/:id?ler-planta=visual` | leitura da planta como imagem (escaneada / fontes em curvas) |
+| `/vistorias/:id?aba=areas` · `?aba=checklist` | quadro de áreas · checklist |
+| `/vistorias/:id/relatorio?modelo=lip` · `bombeiro` · `asbuilt` · `regularizacao` · `fotografico` | modelo do laudo (sem parâmetro = EVTL); `?foto=<id>:nc` escolhe a foto de uma não conformidade |
+| `/relatorios?aba=emitidos` | laudos emitidos em PDF |
+| `/clients?portal=7` | portal do cliente 7 (ativar, link, senha) |
 | `/vistorias?nova=1` | formulário de nova vistoria |
+| `/vistorias?importar=1` | **importar vistoria já realizada** — mesmo formulário, mas segue para `/vistorias/:id/importar` |
 | `/vistorias/:id?captura=1` | link e QR para capturar no celular |
 | `/vistorias/:id?editar=1` | editar dados da vistoria |
 | `/vistorias/:id/conferencia?foto=123` | **a foto 123 ampliada** — o link de uma foto específica |
+| `/vistorias/:id/relatorio?modelo=lip` · `?modelo=fotografico` | o modelo de laudo escolhido (sem parâmetro = EVTL) |
+| `/relatorios?imovel=3` | **só os relatórios daquele imóvel** — é o link da tela do imóvel |
+| `/relatorios?vistoria=12` | só os daquela vistoria — o link da aba Relatório |
+| `/relatorios?cliente=4` | só os daquele cliente |
+| `/relatorios?novo=1` | criar relatório (dentro de um filtro, já limita as vistorias àquele local) |
+| `/relatorios/modelos?novo=1` | enviar um .docx novo para a biblioteca |
 | `/imoveis?novo=1` | formulário de novo imóvel |
 | `/imoveis/:id?editar=1` | editar o imóvel |
 | `/imoveis/:id?nova-vistoria=1` | criar vistoria desse imóvel |
@@ -87,6 +118,12 @@ do botão — senão o link direto abre o diálogo vazio.
 `useTitulo`…) precisa vir **antes** dessa linha — um hook depois dela roda só
 quando os dados chegam e quebra a tela com *"Rendered more hooks than during the
 previous render"*. Aconteceu ao adicionar a leitura da planta em 12/08/2026.
+
+## Verificado em 08/09/2026
+
+As telas da camada de regularização (painel, processos, configurações, financeiro,
+notificações, auditoria, lixeira, comparar, portal) foram abertas no navegador
+com o TypeScript limpo — ver [`regularizacao.md`](regularizacao.md).
 
 ## Verificado em 12/08/2026
 

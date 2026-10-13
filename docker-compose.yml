@@ -42,7 +42,9 @@ services:
       DB_USER: sysjulia
       DB_PASSWORD: sysjulia
       DB_NAME: sistema_julia
-      JWT_SECRET: sistema-julia-troque-este-segredo-em-producao
+      # Segredo do JWT vem do .env (JWT_SECRET). O valor abaixo e so o fallback de
+      # desenvolvimento - o backend avisa no log quando esta usando ele.
+      JWT_SECRET: ${JWT_SECRET:-sistema-julia-dev-sem-segredo}
       # Ponte para o Claude Code do WebAge Hub (backend do Hub roda no HOST:4601).
       # A chave vem do arquivo .env ao lado deste compose (não versionado) —
       # veja .env.example e docs/integracao-webage-hub.md.
@@ -60,6 +62,9 @@ services:
       # em dev, monta POR CIMA do bind ./backend:/app (os arquivos ficam aqui,
       # não no filesystem do Windows).
       - uploads_data:/app/uploads
+      # Backups feitos pelo scripts/backup.ps1 no host: o backend so LE esta pasta
+      # para mostrar no painel quando foi a ultima copia.
+      - ./backups:/app/backups:ro
 
   frontend:
     build:

@@ -12,7 +12,9 @@
 3. Na viagem, **Incluir vistoria**: escolha todas as vistorias daquela ida (busca
    por imóvel, cliente ou tipo).
 4. Monte o **cronograma**: cada trecho com horário, localizador, valor e a opção
-   **avisar antes**.
+   **avisar antes**. O tipo **Tarefa** é o que não é trecho (levar EPI, perguntar
+   o horário do almoço, fazer o checkout): ganha uma caixinha de **feito**, na
+   viagem e na lista da Agenda (`viagem_itens.concluido`, desde 07/10/2026).
 5. **Enviar para o calendário** → baixa um `.ics`. Abrindo no celular, os eventos
    entram no calendário nativo; os itens marcados com “avisar” trazem **alarme**.
    O arquivo inclui também **cada vistoria da viagem** como evento do dia.

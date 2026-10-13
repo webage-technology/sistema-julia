@@ -3,19 +3,47 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Users, Briefcase, LogOut, Building2, Home, ClipboardList, Bot, CalendarDays, Camera, Menu, X } from 'lucide-react'
-import { api, getToken, clearToken } from '@/lib/api'
+import {
+  Users,
+  Briefcase,
+  LogOut,
+  Building2,
+  Home,
+  ClipboardList,
+  Bot,
+  CalendarDays,
+  Camera,
+  FileText,
+  Menu,
+  X,
+  LayoutDashboard,
+  FolderOpen,
+  Wallet,
+  Settings,
+  Search,
+} from 'lucide-react'
+import { api, getToken, sair } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { ehAdmin, mexeDinheiro, PAPEL_LABEL } from '@/lib/papeis'
+import { Sino } from '@/components/sino'
+import { BuscaGlobal } from '@/components/busca-global'
+import { RegistrarSW } from '@/components/registrar-sw'
 
-// Na ordem do trabalho: cadastra o cliente → o imóvel dele → a vistoria.
-// A agenda vem logo depois, por ser a visão do dia a dia sobre as vistorias.
+// Na ordem do trabalho: o painel diz o que precisa de atenção; o processo é o
+// contrato com o cliente; depois os cadastros que ele agrega (cliente, imóvel,
+// vistoria), os entregáveis e a agenda. Usuários e configurações no fim.
 const NAV = [
+  { href: '/painel', label: 'Painel', icon: LayoutDashboard },
+  { href: '/processos', label: 'Processos', icon: FolderOpen },
   { href: '/clients', label: 'Clientes', icon: Briefcase },
   { href: '/imoveis', label: 'Imóveis', icon: Home },
-  // Viagens não fica no menu: é contexto da vistoria (aba dentro de Vistorias).
+  // Cronograma (/viagens) não fica no menu: é aba dentro de Vistorias.
   { href: '/vistorias', label: 'Vistorias', icon: ClipboardList },
+  { href: '/relatorios', label: 'Relatórios', icon: FileText },
   { href: '/agenda', label: 'Agenda', icon: CalendarDays },
+  { href: '/financeiro', label: 'Financeiro', icon: Wallet, financeiro: true },
   { href: '/users', label: 'Usuários', icon: Users },
+  { href: '/configuracoes', label: 'Configurações', icon: Settings, adminOnly: true },
   // Ponte com o Claude Code do WebAge Hub — só faz sentido para quem administra.
   { href: '/ia', label: 'IA', icon: Bot, adminOnly: true },
 ]
@@ -24,10 +52,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [ready, setReady] = useState(false)
-  const [me, setMe] = useState<{ id?: number; email: string; role?: string } | null>(null)
-  // No celular o menu é uma gaveta: fica fora da tela até o usuário abrir. Antes
-  // ele era uma coluna fixa de 240px que comia metade da largura do aparelho.
+  const [me, setMe] = useState<{ id?: number; name?: string; email: string; role?: string } | null>(null)
+  // No celular o menu é uma gaveta: fica fora da tela até o usuário abrir.
   const [menu, setMenu] = useState(false)
+  const [busca, setBusca] = useState(false)
 
   // Navegou? A gaveta fecha sozinha — senão ela tampa a página que acabou de abrir.
   useEffect(() => {
@@ -36,20 +64,32 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login')
+      router.replace(`/login?next=${encodeURIComponent(pathname || '/painel')}`)
       return
     }
     api
-      .get<{ user: { id?: number; email: string; role?: string } }>('/me')
+      .get<{ user: { id?: number; name?: string; email: string; role?: string } }>('/me')
       .then((r) => {
         setMe(r.user)
         setReady(true)
       })
-      .catch(() => {
-        clearToken()
+      .catch(async () => {
+        await sair()
         router.replace('/login')
       })
-  }, [router])
+  }, [router, pathname])
+
+  // Ctrl+K (ou Cmd+K) abre a busca de qualquer tela.
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setBusca((b) => !b)
+      }
+    }
+    window.addEventListener('keydown', tecla)
+    return () => window.removeEventListener('keydown', tecla)
+  }, [])
 
   if (!ready) {
     return (
@@ -57,13 +97,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     )
   }
 
-  const logout = () => {
-    clearToken()
+  const logout = async () => {
+    await sair()
     router.replace('/login')
+  }
+
+  const visivel = (item: (typeof NAV)[number]) => {
+    if (item.adminOnly && !ehAdmin(me?.role)) return false
+    if (item.financeiro && !mexeDinheiro(me?.role)) return false
+    return true
   }
 
   return (
     <div className="flex min-h-screen">
+      <RegistrarSW />
+      <BuscaGlobal aberta={busca} onFechar={() => setBusca(false)} />
       {/* Fundo escuro por trás da gaveta: tocar fora fecha o menu. */}
       {menu && (
         <div
@@ -94,19 +142,28 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
         {/* Ação principal do sistema: é para isso que o app existe. */}
-        <div className="p-3 pb-0">
+        <div className="space-y-2 p-3 pb-0">
           <Link
             href="/iniciar"
             className="flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
           >
             <Camera className="h-5 w-5" /> Iniciar vistoria
           </Link>
+          <button
+            onClick={() => setBusca(true)}
+            className="flex w-full items-center gap-2 rounded-md border border-sidebar-border px-3 py-2 text-left text-sm text-zinc-400 hover:bg-white/5 hover:text-white"
+          >
+            <Search className="h-4 w-4" /> Buscar…
+            <kbd className="ml-auto rounded border border-sidebar-border px-1 text-[10px]">Ctrl K</kbd>
+          </button>
         </div>
-        <nav className="flex-1 space-y-1 p-3">
-          {NAV.filter((item) => !item.adminOnly || me?.role === 'admin').map((item) => {
-            // /viagens vive dentro de Vistorias — mantém o item aceso.
+        <nav className="flex-1 space-y-1 overflow-auto p-3">
+          {NAV.filter(visivel).map((item) => {
+            // /viagens (Cronograma) vive dentro de Vistorias — mantém o item aceso.
             const active =
-              pathname.startsWith(item.href) || (item.href === '/vistorias' && pathname.startsWith('/viagens'))
+              pathname.startsWith(item.href) ||
+              (item.href === '/vistorias' && pathname.startsWith('/viagens')) ||
+              (item.href === '/configuracoes' && (pathname.startsWith('/auditoria') || pathname.startsWith('/lixeira')))
             const Icon = item.icon
             return (
               <Link
@@ -128,16 +185,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="border-t border-sidebar-border p-3">
+          <Sino />
           {/* Atalho para a agenda só do usuário logado (a geral fica no menu). */}
           {me?.id && (
             <Link
               href={`/agenda?responsavel=${me.id}`}
-              className="mb-2 flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-white/5 hover:text-white"
+              className="mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-white/5 hover:text-white"
             >
               <CalendarDays className="h-4 w-4 text-zinc-500" /> Minha agenda
             </Link>
           )}
-          <div className="mb-2 truncate px-2 text-xs text-zinc-500">{me?.email}</div>
+          <div className="mb-1 truncate px-3 text-xs text-zinc-500" title={me?.email}>
+            {me?.name || me?.email}
+            {me?.role && <span className="ml-1 text-zinc-600">· {PAPEL_LABEL[me.role] || me.role}</span>}
+          </div>
           <button
             onClick={logout}
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-white/5 hover:text-white"
@@ -153,9 +214,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Menu className="h-6 w-6" />
           </button>
           <span className="font-semibold">Sistema Julia</span>
+          <button onClick={() => setBusca(true)} className="ml-auto rounded-md p-2 hover:bg-white/10" aria-label="Buscar">
+            <Search className="h-5 w-5" />
+          </button>
           <Link
             href="/iniciar"
-            className="ml-auto flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
           >
             <Camera className="h-4 w-4" /> Vistoria
           </Link>

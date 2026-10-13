@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 
-// A raiz leva para a tela de trabalho do dia a dia.
+// A raiz leva para o painel: o que precisa de atenção hoje.
 export default function Home() {
-  redirect('/vistorias')
+  redirect('/painel')
 }

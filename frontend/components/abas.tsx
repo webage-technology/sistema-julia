@@ -1,6 +1,6 @@
 'use client'
 
-// Abas de navegação entre telas irmãs (ex.: Vistorias | Viagens). Cada aba é um
+// Abas de navegação entre telas irmãs (ex.: Vistorias | Cronograma). Cada aba é um
 // link de verdade — mantém a regra de que toda tela tem endereço próprio.
 //
 // Antes eram um sublinhado fininho, que sumia no meio da página. Agora são um
@@ -9,7 +9,7 @@
 // em que parte da vistoria se está.
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Camera, ClipboardList, FileText, Plane, type LucideIcon } from 'lucide-react'
+import { CalendarClock, Camera, ClipboardList, FileText, type LucideIcon } from 'lucide-react'
 
 export interface AbaItem {
   href: string
@@ -45,9 +45,12 @@ export function Abas({ itens }: { itens: AbaItem[] }) {
   )
 }
 
+// O cronograma é a viagem vista pelo lado do tempo: quando se sai, o que está
+// marcado em campo e a verba daquela ida. Os dados continuam sendo os da
+// viagem (/viagens) — só o nome da aba fala a língua de quem usa.
 export const ABAS_VISTORIAS: AbaItem[] = [
   { href: '/vistorias', label: 'Vistorias', icon: ClipboardList },
-  { href: '/viagens', label: 'Viagens', icon: Plane, ativoEm: ['/viagens'] },
+  { href: '/viagens', label: 'Cronograma', icon: CalendarClock, ativoEm: ['/viagens'] },
 ]
 
 // Abas de uma vistoria: o trabalho de campo e o laudo que sai dele.

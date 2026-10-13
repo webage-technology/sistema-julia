@@ -12,6 +12,7 @@ import {
   ExternalLink,
   FileSpreadsheet,
   FileUp,
+  ListChecks,
   Loader2,
   Paperclip,
   Plane,
@@ -42,6 +43,7 @@ interface Item {
   notificar: boolean
   lembreteMin: number
   obs: string
+  concluido: boolean
 }
 
 interface Despesa {
@@ -94,6 +96,7 @@ const TIPOS = [
   { v: 'transfer', label: 'Transfer / Uber', icon: Car },
   { v: 'hotel', label: 'Hospedagem', icon: Bed },
   { v: 'vistoria', label: 'Vistoria', icon: CalendarPlus },
+  { v: 'tarefa', label: 'Tarefa (marcar como feita)', icon: ListChecks },
   { v: 'outro', label: 'Outro', icon: CalendarPlus },
 ]
 
@@ -106,6 +109,7 @@ const CATEGORIAS = [
 ]
 
 const LEMBRETES = [
+  { v: 0, label: 'Na hora' },
   { v: 30, label: '30 min antes' },
   { v: 60, label: '1 hora antes' },
   { v: 120, label: '2 horas antes' },
@@ -272,6 +276,11 @@ export default function ViagemPage() {
     }
   }
 
+  const marcarFeito = async (it: Item) => {
+    await api.put(`/viagem-itens/${it.id}`, { concluido: !it.concluido })
+    carregar()
+  }
+
   const excluirItem = async (it: Item) => {
     if (!confirm(`Excluir “${it.titulo}” do cronograma?`)) return
     await api.del(`/viagem-itens/${it.id}`)
@@ -377,7 +386,7 @@ export default function ViagemPage() {
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <Link href="/viagens" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-          <ArrowLeft className="h-4 w-4" /> Viagens
+          <ArrowLeft className="h-4 w-4" /> Cronograma
         </Link>
         <h1 className="text-2xl font-semibold">{d.viagem.titulo || d.viagem.destino || `Viagem #${d.viagem.id}`}</h1>
         <p className="text-sm text-muted-foreground">
@@ -502,7 +511,10 @@ export default function ViagemPage() {
           </div>
           <div className="space-y-1.5">
             <Label>Observações da viagem</Label>
-            <Input
+            {/* textarea: um <input> perderia as quebras de linha (roteiro, listas). */}
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              rows={Math.min(24, Math.max(3, d.viagem.observacoes.split('\n').length + 1))}
               defaultValue={d.viagem.observacoes}
               placeholder="Ex.: levar trena a laser, combinar chave com o zelador"
               onBlur={(e) => e.target.value !== d.viagem.observacoes && salvarViagem({ observacoes: e.target.value })}
@@ -609,13 +621,24 @@ export default function ViagemPage() {
                     <span className="absolute -left-[27px] flex h-5 w-5 items-center justify-center rounded-full border bg-background">
                       <Icon className="h-3 w-3" />
                     </span>
-                    <div className="flex flex-wrap items-center gap-2 rounded-md border p-2.5">
+                    <div className={`flex flex-wrap items-center gap-2 rounded-md border p-2.5 ${it.concluido ? 'opacity-60' : ''}`}>
+                      {it.tipo === 'tarefa' && (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0 accent-primary"
+                          checked={it.concluido}
+                          onChange={() => marcarFeito(it)}
+                          aria-label={it.concluido ? 'Desmarcar tarefa' : 'Marcar tarefa como feita'}
+                        />
+                      )}
                       <div className="min-w-0 flex-1">
-                        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                        <p className={`flex flex-wrap items-center gap-2 text-sm font-medium ${it.concluido ? 'line-through' : ''}`}>
                           {it.titulo}
                           {it.notificar && (
                             <span className="rounded bg-muted px-1.5 text-[11px] text-muted-foreground ring-1 ring-border">
-                              avisa {it.lembreteMin >= 60 ? `${it.lembreteMin / 60}h` : `${it.lembreteMin}min`} antes
+                              {it.lembreteMin <= 0
+                                ? 'avisa na hora'
+                                : `avisa ${it.lembreteMin >= 60 ? `${it.lembreteMin / 60}h` : `${it.lembreteMin}min`} antes`}
                             </span>
                           )}
                         </p>
@@ -623,8 +646,8 @@ export default function ViagemPage() {
                           {quando(it)}
                           {it.origem || it.destino ? ` · ${it.origem || '?'} → ${it.destino || '?'}` : ''}
                           {it.codigo ? ` · ${it.codigo}` : ''}
-                          {it.obs ? ` · ${it.obs}` : ''}
                         </p>
+                        {it.obs && <p className="whitespace-pre-line text-xs text-muted-foreground">{it.obs}</p>}
                       </div>
                       {!!it.valor && <span className="text-sm">{dinheiro(it.valor)}</span>}
                       <Button variant="ghost" size="sm" onClick={() => setItemOpen(String(it.id))}>
@@ -890,7 +913,12 @@ export default function ViagemPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Observação</Label>
-              <Input value={form.obs} onChange={(e) => setForm({ ...form, obs: e.target.value })} />
+              <textarea
+                className="flex min-h-[64px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                rows={3}
+                value={form.obs}
+                onChange={(e) => setForm({ ...form, obs: e.target.value })}
+              />
             </div>
             <div className="flex flex-wrap items-center gap-3 rounded-md border p-3">
               <label className="flex items-center gap-2 text-sm">

@@ -1,9 +1,15 @@
 # Sistema Julia
 
-Sistema de **vistorias** da Julia: login, usuários, clientes, imóveis e o
-**módulo de vistorias** — captura guiada de fotos pelo celular (PWA), conferência
-por fita cronológica e export em ZIP no formato do entregável
-(pastas por pavimento/ambiente, fotos numeradas na ordem do caminho).
+Sistema de **regularização e vistorias** da Julia (Plenno Arquitetura):
+**processos** com a prefeitura (etapas, protocolos com prazo, documentos exigidos,
+RRT, despesas), imóveis com ficha cadastral e planta com pinos, o **módulo de
+vistorias** — captura guiada de fotos pelo celular (PWA, com GPS), conferência por
+fita cronológica, quadro de áreas, checklists e não conformidades — e os
+entregáveis: laudos em **PDF emitidos e versionados**, documentos Word, export em
+ZIP, portal do cliente. Com papéis, auditoria, lixeira, notificações e backup.
+
+Camada de regularização (as 20 funcionalidades de 08/09/2026): [`docs/regularizacao.md`](docs/regularizacao.md).
+Segurança, papéis e backup: [`docs/seguranca-e-backup.md`](docs/seguranca-e-backup.md).
 
 Plano e decisões: [`docs/plano-modulo-vistorias.md`](docs/plano-modulo-vistorias.md).
 Integração com o Claude Code do WebAge Hub: [`docs/integracao-webage-hub.md`](docs/integracao-webage-hub.md).
@@ -34,21 +40,37 @@ O frontend chama a API na mesma origem (`/api/*`); o Next faz proxy para o backe
 
 Criado automaticamente no primeiro boot:
 
-- **admin@sistema-julia.local** / **admin123**
+- **admin@sistema-julia.local** / **admin123** — troque em Usuários (ou gere um link de redefinição).
+
+Papéis: administrador, arquiteto(a), estagiário(a), financeiro. Só o administrador
+mexe em usuários e configurações.
 
 ## Estrutura
 
 ```
-backend/    Express — server.js + src/{db,auth,vistorias,fotos,uploads,hub}.js
-            Fotos/plantas no volume docker uploads_data (orig + web + thumb)
+backend/    Express — server.js + src/*.js
+            vistorias/fotos/uploads/planta/viagens/relatorios/modelos/lip/divergencias (vistoria)
+            schema-regularizacao/processos/arquivos/escritorio/auditoria/lixeira/inspecao/
+            areas/comparar/planta-pinos/pdf/laudos/portal/notificacoes/painel/seguranca (regularização)
             hub.js = ponte com o Claude Code do WebAge Hub (/api/hub/*)
-frontend/   Next.js — app/(login, (app)/{users,clients,imoveis,vistorias,ia}, captura/[id])
-            captura/[id] = tela de campo (PWA, fora do layout com sidebar)
-scripts/    utilitários (gerar ícones do PWA, fotos de teste)
+            Fotos/plantas/laudos/arquivos no volume docker uploads_data
+frontend/   Next.js — app/(login, esqueci-senha, redefinir-senha,
+            (app)/{painel,processos,clients,imoveis,vistorias,relatorios,agenda,financeiro,
+                   notificacoes,users,configuracoes,auditoria,lixeira,ia},
+            captura/[id] (PWA, tela cheia), portal/[token] (cliente))
+            public/sw.js = service worker (abre sem sinal)
+scripts/    backup.ps1 + registrar-backup.ps1 (cópia diária), ícones do PWA, fotos de teste
+backups/    cópias geradas pelo backup (montada só para leitura no backend)
 ```
 
 ## Variáveis de ambiente
 
-Copie `.env.example` para `.env` (não versionado) para ligar a integração com o
-Hub (`HUB_URL`, `HUB_INTEGRATION_KEY`). Sem elas o sistema funciona normalmente —
-só a aba **IA** fica indisponível.
+Copie `.env.example` para `.env` (não versionado):
+
+- `JWT_SECRET` — segredo das sessões (obrigatório fora do desenvolvimento).
+- `HUB_URL`, `HUB_INTEGRATION_KEY` — integração com o Claude do WebAge Hub. Sem
+  elas o sistema funciona; ficam indisponíveis a aba **IA**, a leitura de planta
+  (texto e imagem), a fatura por IA e o "escrever com a IA".
+
+E-mail (SMTP) e WhatsApp (Evolution API) das notificações são configurados na
+tela **Configurações → Notificações**, não em variáveis de ambiente.

@@ -1,4 +1,8 @@
+'use client'
+
 // Tipos e constantes compartilhados do módulo de vistorias.
+import { useEffect, useMemo, useState } from 'react'
+import { api } from './api'
 
 export interface Ambiente {
   id: number
@@ -10,6 +14,10 @@ export interface Ambiente {
   nomearDepois: boolean
   nota: string
   medidas: string
+  comprimento: number | null
+  largura: number | null
+  peDireito: number | null
+  area: number | null
   fotos: number
 }
 
@@ -31,23 +39,32 @@ export interface VistoriaResumo {
   clienteNome?: string
   responsavelId?: number | null
   responsavelNome?: string | null
+  processoId?: number | null
+  processoNumero?: string | null
   fotos: number
 }
 
 export interface VistoriaDetalhe {
   id: number
   imovelId: number
+  clientId?: number
   tipoServico: string
   dataVistoria: string | null
   participantes: string
   status: string
   responsavelId: number | null
   responsavelNome: string | null
+  processoId: number | null
+  processoNumero: string | null
+  processoTitulo: string | null
   viagemId: number | null
   viagemTitulo: string | null
   imovelNome: string
   endereco: string
   temPlanta: boolean
+  pinos?: number
+  areaAprovada?: number | null
+  areaIptu?: number | null
   clienteNome: string
   pavimentos: Pavimento[]
   totais: { fotos: number; semAmbiente: number }
@@ -76,6 +93,24 @@ export interface Imovel {
   plantaNome?: string
   temPlanta?: boolean
   vistorias?: number
+  processos?: number
+  // Ficha cadastral (regularização)
+  matricula?: string
+  cartorio?: string
+  inscricao?: string
+  lote?: string
+  quadra?: string
+  zoneamento?: string
+  uso?: string
+  areaTerreno?: number | null
+  areaAprovada?: number | null
+  areaIptu?: number | null
+  latitude?: number | null
+  longitude?: number | null
+  cep?: string
+  municipio?: string
+  uf?: string
+  observacoes?: string
 }
 
 export interface Foto {
@@ -86,7 +121,87 @@ export interface Foto {
   claquete: boolean
   destaque: boolean
   lip: boolean
+  legenda: string
   ordem: number
+  latitude?: number | null
+  longitude?: number | null
+  precisao?: number | null
+  temAnotacao?: boolean
+  carimbada?: boolean
+  cartao?: boolean // foto de cartão de claquete com QR (lido no upload)
+}
+
+// Resultado de POST /vistorias/:id/fotos/separar — fotos separadas por
+// ambiente a partir dos cartões de claquete com QR.
+export interface Separacao {
+  cartoes: number
+  separadas: number
+  ambientesCriados: number
+  semAmbiente: number
+  ambientes: number
+}
+
+export const separarPorCartoes = (vistoriaId: number | string, refazer = false) =>
+  api.post<{ data: Separacao }>(`/vistorias/${vistoriaId}/fotos/separar`, { refazer }).then((r) => r.data)
+
+// cartoes/semAmbiente = vistoria inteira; separadas/ambientes/criados = só esta passada.
+export function resumoSeparacao(s: Separacao) {
+  if (!s.cartoes) return 'Nenhum cartão de claquete encontrado nas fotos — separe na Conferência.'
+  const pl = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`
+  const partes = [
+    s.separadas
+      ? `${pl(s.separadas, 'foto separada', 'fotos separadas')} em ${pl(s.ambientes, 'ambiente', 'ambientes')} pelos cartões de claquete`
+      : 'Nenhuma foto nova para separar',
+  ]
+  if (s.ambientesCriados) partes.push(`${pl(s.ambientesCriados, 'ambiente novo', 'ambientes novos')} para nomear na Conferência`)
+  if (s.semAmbiente) partes.push(`${pl(s.semAmbiente, 'foto ficou', 'fotos ficaram')} sem ambiente (antes do primeiro cartão do dia) — veja na Conferência`)
+  return partes.join(' · ')
+}
+
+// Relatório como DOCUMENTO: existe como registro, aparece na área de Relatórios
+// e pode ser lido no contexto amplo (todos) ou filtrado por vistoria/imóvel.
+export interface Relatorio {
+  id: number
+  vistoriaId: number
+  modelo: string
+  titulo: string
+  subtitulo: string
+  dataTexto: string
+  fonte: string
+  texto: string
+  modeloId: number | null
+  modeloNome: string | null
+  modeloTipo: 'nativo' | 'docx'
+  imovelId: number
+  imovelNome: string
+  endereco: string
+  clientId: number
+  clienteNome: string
+  tipoServico: string
+  dataVistoria: string | null
+  fotosIncluidas: number
+  createdAt: string
+  updatedAt: string
+}
+
+// Um modelo da biblioteca (o "armário" de documentos do escritório).
+//   'nativo' — montado por código, com as fotos da vistoria (o fotográfico)
+//   'docx'   — arquivo do escritório, preenchido pelos campos {{...}} que tiver
+export interface Modelo {
+  id: number
+  nome: string
+  descricao: string
+  tipo: 'nativo' | 'docx'
+  chave: string
+  temArquivo: boolean
+  nomeOriginal: string
+  usos: number
+  createdAt: string
+}
+
+export interface CampoModelo {
+  chave: string
+  descricao: string
 }
 
 // Etapas na ordem do trabalho. 'relatorio' é o depois de "Finalizar vistoria":
@@ -113,6 +228,8 @@ export const STATUS_COR: Record<string, string> = {
 // A etapa de fotos acabou? Vale para a tela decidir o que colocar em destaque.
 export const emRelatorio = (status: string) => status === 'relatorio' || status === 'concluida'
 
+// Os tipos que existem independentemente da biblioteca de modelos. Os nomes dos
+// relatórios entram por cima destes — ver useTiposServico() no fim do arquivo.
 export const TIPOS_SERVICO = [
   'EVTL — Estudo de Viabilidade Técnica e Legal',
   'LIP — Laudo de Inspeção Predial',
@@ -158,6 +275,41 @@ export function filtrarPorTexto<T>(itens: T[], busca: string, campos: (item: T) 
     const alvo = campos(item).map(semAcento).join(' ')
     return termos.every((t) => alvo.includes(t))
   })
+}
+
+/**
+ * Tipos de serviço para escolher numa vistoria.
+ *
+ * O tipo da vistoria e o nome do relatório dizem a mesma coisa — que trabalho é
+ * este —, então a lista fixa é somada aos nomes dos modelos da biblioteca:
+ * cadastrou um modelo novo, ele já aparece aqui como tipo. "Outro" fica sempre
+ * por último, que é o lugar de um item pega-tudo.
+ *
+ * Devolve a lista fixa de imediato e acrescenta os modelos quando eles chegam —
+ * assim quem usa `tipos[0]` como valor padrão nunca pega um array vazio.
+ */
+export function useTiposServico(): string[] {
+  const [modelos, setModelos] = useState<string[]>([])
+
+  useEffect(() => {
+    api
+      .get<{ data: { nome: string }[] }>('/modelos')
+      .then((r) => setModelos(r.data.map((m) => m.nome)))
+      .catch(() => {}) // sem a biblioteca, a lista fixa já resolve
+  }, [])
+
+  return useMemo(() => {
+    const fixos = TIPOS_SERVICO.filter((t) => t !== 'Outro')
+    const vistos = new Set(fixos.map(semAcento))
+    const extras: string[] = []
+    for (const nome of modelos) {
+      const chave = semAcento(nome)
+      if (!nome.trim() || vistos.has(chave)) continue // já está na lista fixa
+      vistos.add(chave)
+      extras.push(nome)
+    }
+    return [...fixos, ...extras, 'Outro']
+  }, [modelos])
 }
 
 // Classe utilitária de <select> nativo no estilo dos inputs do shadcn.

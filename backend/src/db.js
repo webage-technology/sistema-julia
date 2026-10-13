@@ -164,6 +164,75 @@ async function init() {
   `)
   await pool.query('CREATE INDEX IF NOT EXISTS idx_divergencias_vistoria ON divergencias (vistoria_id, ordem, id)')
 
+  // ---- Biblioteca de modelos de documento ----------------------------------
+  // O acervo do escritório: os .docx que a Julia já usa (laudos, declarações,
+  // pareceres) ficam guardados aqui e são preenchidos com os dados dos cadastros
+  // na hora de gerar. `tipo`:
+  //   'nativo' — montado por código, com as fotos da vistoria (chave identifica qual)
+  //   'docx'   — arquivo enviado, preenchido pelos campos {{...}} que ele tiver
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS modelos (
+      id            SERIAL PRIMARY KEY,
+      nome          TEXT NOT NULL,
+      descricao     TEXT NOT NULL DEFAULT '',
+      tipo          TEXT NOT NULL DEFAULT 'docx',
+      chave         TEXT NOT NULL DEFAULT '',
+      arquivo       TEXT NOT NULL DEFAULT '',
+      nome_original TEXT NOT NULL DEFAULT '',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  // O Relatório Fotográfico é o modelo que já vem com o sistema.
+  await pool.query(
+    `INSERT INTO modelos (nome, descricao, tipo, chave)
+     SELECT 'Relatório fotográfico',
+       'Capa, localização do imóvel e as fotos da vistoria em duas colunas, numeradas e legendadas — uma seção por ambiente.',
+       'nativo', 'fotografico'
+     WHERE NOT EXISTS (SELECT 1 FROM modelos WHERE chave = 'fotografico')`
+  )
+
+  // ---- Relatórios (documentos) ---------------------------------------------
+  // Um relatório é um DOCUMENTO de uma vistoria: o modelo (hoje 'fotografico'),
+  // a capa e o texto que a Julia escreve. Existir como linha é o que permite a
+  // área de Relatórios ver todos num contexto amplo — e filtrar por vistoria,
+  // imóvel ou cliente quando se entra por dentro deles.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS relatorios (
+      id          SERIAL PRIMARY KEY,
+      vistoria_id INTEGER NOT NULL REFERENCES vistorias(id) ON DELETE CASCADE,
+      modelo      TEXT NOT NULL DEFAULT 'fotografico',
+      titulo      TEXT NOT NULL DEFAULT 'Relatório fotográfico',
+      subtitulo   TEXT NOT NULL DEFAULT '',
+      data_texto  TEXT NOT NULL DEFAULT '',
+      fonte       TEXT NOT NULL DEFAULT 'Plenno Arquitetura',
+      texto       TEXT NOT NULL DEFAULT '',
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_relatorios_vistoria ON relatorios (vistoria_id, id)')
+  // De qual modelo da biblioteca este relatório saiu. Apagar o modelo não apaga
+  // os documentos já feitos com ele — por isso SET NULL, e não CASCADE.
+  await pool.query(
+    'ALTER TABLE relatorios ADD COLUMN IF NOT EXISTS modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL'
+  )
+  await pool.query(
+    "UPDATE relatorios r SET modelo_id = m.id FROM modelos m WHERE m.chave = r.modelo AND r.modelo_id IS NULL"
+  )
+  // Quais fotos entram em CADA relatório (dois relatórios da mesma vistoria
+  // podem levar recortes diferentes). O LIP continua com a sua marca em fotos.lip.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS relatorio_fotos (
+      relatorio_id INTEGER NOT NULL REFERENCES relatorios(id) ON DELETE CASCADE,
+      foto_id      INTEGER NOT NULL REFERENCES fotos(id) ON DELETE CASCADE,
+      PRIMARY KEY (relatorio_id, foto_id)
+    )
+  `)
+  // A legenda é da FOTO, não do relatório: "Imagem 07. Bilheteria – Praia
+  // Vermelha." descreve o que está na imagem e serve a qualquer documento.
+  // Vazia, o relatório cai no nome do ambiente.
+  await pool.query("ALTER TABLE fotos ADD COLUMN IF NOT EXISTS legenda TEXT NOT NULL DEFAULT ''")
+
   // ---- Viagem, cronograma e prestação de contas ----------------------------
   // Quem faz a vistoria (a equipe tem mais de um profissional).
   await pool.query(
@@ -228,6 +297,9 @@ async function init() {
       obs          TEXT NOT NULL DEFAULT ''
     )
   `)
+  // Item do tipo "tarefa" (levar EPI, perguntar o horário do almoço…) se marca
+  // como feito na viagem e na agenda.
+  await pool.query('ALTER TABLE viagem_itens ADD COLUMN IF NOT EXISTS concluido BOOLEAN NOT NULL DEFAULT false')
   // Gastos da viagem com o comprovante anexado (foto ou PDF).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS despesas (
@@ -253,6 +325,11 @@ async function init() {
   await pool.query('ALTER TABLE despesas ALTER COLUMN vistoria_id DROP NOT NULL')
   await pool.query('CREATE INDEX IF NOT EXISTS idx_despesas_viagem ON despesas (viagem_id)')
   await pool.query('CREATE INDEX IF NOT EXISTS idx_itens_viagem ON viagem_itens (viagem_id, inicio)')
+
+  // ---- Camada de regularização (processos, protocolos, documentos, GED,
+  // RRT, áreas, não conformidades, checklists, pinos, laudos, portal,
+  // notificações, financeiro, auditoria, lixeira) — src/schema-regularizacao.js
+  await require('./schema-regularizacao').migrar(pool)
 
   const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM users')
   if (rows[0].c === 0) {

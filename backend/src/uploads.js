@@ -44,13 +44,18 @@ const temAcento = (s) => {
   return false
 }
 
-function nomeOriginal(file) {
-  const bruto = String(file?.originalname || '')
+// Desfaz a leitura em latin1 de um texto que veio num multipart (nome de
+// arquivo ou campo de formulário). Vale para os DOIS: o busboy trata ambos do
+// mesmo jeito, então "Laudo técnico" chega como "Laudo tÃ©cnico".
+function textoDoForm(valor) {
+  const bruto = String(valor ?? '')
   if (!temAcento(bruto)) return bruto
   const relido = Buffer.from(bruto, 'latin1').toString('utf8')
-  // Se a releitura gerou caractere invalido, o nome ja estava certo.
+  // Se a releitura gerou caractere invalido, o texto ja estava certo.
   return relido.includes('�') ? bruto : relido
 }
+
+const nomeOriginal = (file) => textoDoForm(file?.originalname)
 
 // Caminhos das variantes a partir do caminho relativo do original
 // (vistorias/<id>/orig/<base>.<ext>).
@@ -60,23 +65,91 @@ function variantes(arquivo) {
   return { orig: arquivo, web: `${dir}/web/${base}.jpg`, thumb: `${dir}/thumb/${base}.jpg` }
 }
 
-// Data em que a foto foi tirada, gravada dentro do arquivo (EXIF). É ela que
-// define a ordem do caminho no upload em lote.
-async function dataExif(input) {
+// Data e posição gravadas dentro do arquivo (EXIF). A data define a ordem do
+// caminho no upload em lote; o GPS vai para o carimbo e para o laudo.
+async function metaExif(input) {
+  const meta = { capturadaEm: null, latitude: null, longitude: null }
   try {
     const exif = await exifr.parse(input, { pick: ['DateTimeOriginal', 'CreateDate', 'ModifyDate'] })
-    return exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null
+    meta.capturadaEm = exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null
   } catch {
-    return null
+    /* sem EXIF */
   }
+  try {
+    const gps = await exifr.gps(input)
+    if (gps && Number.isFinite(gps.latitude) && Number.isFinite(gps.longitude)) {
+      meta.latitude = gps.latitude
+      meta.longitude = gps.longitude
+    }
+  } catch {
+    /* sem GPS */
+  }
+  return meta
 }
 
 const pareceHeic = (nome, mime) => /\.hei[cf]$/i.test(nome || '') || /hei[cf]/i.test(mime || '')
 
-// Processa uma foto enviada: lê a data EXIF, converte HEIC se preciso e grava
-// original + web + thumb. Devolve { arquivo, capturadaEm }.
-async function processarFoto(tmpPath, nomeOriginal, mime, vistoriaId) {
-  const capturadaEm = await dataExif(tmpPath)
+const escXml = (s) =>
+  String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+// Faixa escura no rodapé com data/hora, posição e ambiente — o carimbo que
+// laudo pericial e comunique-se pedem. Vai só nas variantes exibidas/impressas;
+// o original fica intocado.
+function svgCarimbo(largura, altura, linhas) {
+  const fonte = Math.max(14, Math.round(largura / 60))
+  const alturaFaixa = Math.round(fonte * 1.6 * linhas.length + fonte * 0.8)
+  const textos = linhas
+    .map(
+      (l, i) =>
+        `<text x="${Math.round(fonte * 0.8)}" y="${altura - alturaFaixa + fonte * 1.3 * (i + 1)}" font-family="Arial, Helvetica, sans-serif" font-size="${fonte}" fill="#ffffff">${escXml(l)}</text>`
+    )
+    .join('')
+  return Buffer.from(
+    `<svg width="${largura}" height="${altura}" xmlns="http://www.w3.org/2000/svg">
+       <rect x="0" y="${altura - alturaFaixa}" width="${largura}" height="${alturaFaixa}" fill="#000000" fill-opacity="0.55"/>
+       ${textos}
+     </svg>`
+  )
+}
+
+// Gera (ou regera) web + thumb a partir do original, aplicando a orientação
+// EXIF, a anotação (PNG transparente desenhado na tela) e o carimbo.
+async function gerarVariantes(arquivo, { carimbo = null, anotacao = null } = {}) {
+  const v = variantes(arquivo)
+  const origem = absPath(v.orig)
+  const img = sharp(await fsp.readFile(origem), { failOn: 'none' }).rotate()
+  let web = img.clone().resize({ width: 1800, height: 1800, fit: 'inside', withoutEnlargement: true })
+  const camadas = []
+  const meta = await web.clone().toBuffer({ resolveWithObject: true })
+  const { width, height } = meta.info
+  if (anotacao) {
+    const anotAbs = absPath(anotacao)
+    if (fs.existsSync(anotAbs)) {
+      // A anotação foi desenhada sobre a imagem exibida; redimensiona para o
+      // tamanho exato da variante web.
+      const png = await sharp(anotAbs).resize({ width, height, fit: 'fill' }).png().toBuffer()
+      camadas.push({ input: png, top: 0, left: 0 })
+    }
+  }
+  if (carimbo && carimbo.length) camadas.push({ input: svgCarimbo(width, height, carimbo), top: 0, left: 0 })
+  let webBuffer = meta.data
+  if (camadas.length) webBuffer = await sharp(meta.data).composite(camadas).toBuffer()
+  await sharp(webBuffer).jpeg({ quality: 80 }).toFile(absPath(v.web))
+  await sharp(webBuffer)
+    .resize({ width: 400, height: 400, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 72 })
+    .toFile(absPath(v.thumb))
+}
+
+// Processa uma foto enviada: lê data e GPS do EXIF, converte HEIC se preciso e
+// grava original + web + thumb. `carimbo` são as linhas de texto da faixa.
+// Devolve { arquivo, capturadaEm, latitude, longitude }.
+async function processarFoto(tmpPath, nomeOriginal, mime, vistoriaId, { carimbo = null } = {}) {
+  const meta = await metaExif(tmpPath)
   let buffer = await fsp.readFile(tmpPath)
   let ext = (path.extname(nomeOriginal || '').toLowerCase() || '.jpg').replace(/[^.a-z0-9]/g, '')
 
@@ -98,22 +171,32 @@ async function processarFoto(tmpPath, nomeOriginal, mime, vistoriaId) {
   for (const sub of ['orig', 'web', 'thumb']) ensureDirSync(absPath(`${rel}/${sub}`))
   const arquivo = `${rel}/orig/${base}${ext}`
   await fsp.writeFile(absPath(arquivo), buffer)
-
-  // .rotate() aplica a orientação EXIF para as variantes exibidas no navegador.
-  const img = sharp(buffer, { failOn: 'none' }).rotate()
-  await img
-    .clone()
-    .resize({ width: 1800, height: 1800, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 80 })
-    .toFile(absPath(`${rel}/web/${base}.jpg`))
-  await img
-    .clone()
-    .resize({ width: 400, height: 400, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 72 })
-    .toFile(absPath(`${rel}/thumb/${base}.jpg`))
+  await gerarVariantes(arquivo, { carimbo })
 
   await fsp.unlink(tmpPath).catch(() => {})
-  return { arquivo, capturadaEm }
+  return { arquivo, ...meta }
+}
+
+// Anotação (setas, círculos) desenhada na conferência: PNG transparente
+// guardado ao lado do original, aplicado nas variantes por gerarVariantes.
+async function salvarAnotacao(arquivo, pngBuffer) {
+  const dir = path.posix.dirname(path.posix.dirname(arquivo))
+  const base = path.posix.basename(arquivo).replace(/\.[^.]+$/, '')
+  ensureDirSync(absPath(`${dir}/anot`))
+  const rel = `${dir}/anot/${base}.png`
+  await fsp.writeFile(absPath(rel), pngBuffer)
+  return rel
+}
+
+// Arquivo qualquer do GED (matrícula, alvará, DWG…): guardado como veio, em
+// uploads/<pasta>/<ano>/<nome aleatório>.<ext>.
+async function salvarArquivoGenerico(tmpPath, nomeOriginal, pasta = 'arquivos') {
+  const ext = (path.extname(nomeOriginal || '').toLowerCase() || '').replace(/[^.a-z0-9]/g, '').slice(0, 10)
+  const dirRel = `${pasta}/${new Date().getFullYear()}`
+  ensureDirSync(absPath(dirRel))
+  const rel = `${dirRel}/${nomeAleatorio()}${ext}`
+  await mover(tmpPath, absPath(rel))
+  return rel
 }
 
 const EXT_PLANTA = ['.pdf', '.jpg', '.jpeg', '.png', '.webp']
@@ -200,6 +283,20 @@ async function salvarFatura(tmpPath, nomeOriginal, viagemId) {
   return rel
 }
 
+// Modelo de documento da biblioteca de relatórios: o .docx que a Julia já usa
+// no escritório, guardado como veio para ser preenchido a cada geração.
+async function salvarModelo(tmpPath, nomeOriginal) {
+  const ext = path.extname(nomeOriginal || '').toLowerCase()
+  if (ext !== '.docx') {
+    await fsp.unlink(tmpPath).catch(() => {})
+    throw new Error('O modelo precisa ser um arquivo Word (.docx) — no Word, "Salvar como" → Documento .docx')
+  }
+  ensureDirSync(absPath('modelos'))
+  const rel = `modelos/${nomeAleatorio()}.docx`
+  await mover(tmpPath, absPath(rel))
+  return rel
+}
+
 async function salvarComprovante(tmpPath, nomeOriginal, vistoriaId) {
   const ext = path.extname(nomeOriginal || '').toLowerCase()
   if (!EXT_COMPROVANTE.includes(ext)) {
@@ -215,7 +312,9 @@ async function salvarComprovante(tmpPath, nomeOriginal, vistoriaId) {
 
 async function removerArquivosFoto(arquivo) {
   const v = variantes(arquivo)
-  for (const rel of [v.orig, v.web, v.thumb]) await fsp.unlink(absPath(rel)).catch(() => {})
+  const dir = path.posix.dirname(path.posix.dirname(arquivo))
+  const base = path.posix.basename(arquivo).replace(/\.[^.]+$/, '')
+  for (const rel of [v.orig, v.web, v.thumb, `${dir}/anot/${base}.png`]) await fsp.unlink(absPath(rel)).catch(() => {})
 }
 
 const removerPastaVistoria = (vistoriaId) =>
@@ -229,13 +328,21 @@ module.exports = {
   absPath,
   variantes,
   processarFoto,
+  gerarVariantes,
+  salvarAnotacao,
+  salvarArquivoGenerico,
+  mover,
+  ensureDirSync,
+  nomeAleatorio,
   salvarPlantas,
   listarPlantas,
   removerPlantas,
   salvarComprovante,
   salvarFatura,
+  salvarModelo,
   removerArquivosFoto,
   removerPastaVistoria,
   removerArquivo,
   nomeOriginal,
+  textoDoForm,
 }

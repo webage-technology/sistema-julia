@@ -11,9 +11,11 @@ import {
   ChevronRight,
   ClipboardList,
   Filter,
+  ListChecks,
   Plane,
   Plus,
   Search,
+  Stamp,
   X,
 } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -27,6 +29,7 @@ import {
   VistoriaResumo,
   filtrarPorTexto,
 } from '@/lib/vistorias'
+import { Prazo } from '@/lib/regularizacao'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -56,6 +59,8 @@ interface ItemCronograma {
   codigo: string
   valor: number
   notificar: boolean
+  obs: string
+  concluido: boolean
   viagemId: number
   viagemTitulo: string
   clientes: string | null
@@ -76,25 +81,33 @@ interface Evento {
   responsavelNome: string | null
   cor: string
   destino: string
+  itemId?: number // trecho/tarefa de viagem (a tarefa se marca como feita aqui)
+  viagemId?: number
+  concluido?: boolean
+  obs?: string
 }
 
 const ICONE: Record<string, typeof Plane> = {
   vistoria: ClipboardList,
+  prazo: Stamp,
   voo: Plane,
   onibus: Bus,
   carro: Car,
   transfer: Car,
   hotel: Bed,
+  tarefa: ListChecks,
 }
 
 const TIPOS_FILTRO = [
   { v: '', label: 'Todos os tipos' },
   { v: 'vistoria', label: 'Vistorias' },
+  { v: 'prazo', label: 'Prazos (protocolos e documentos)' },
   { v: 'voo', label: 'Voos' },
   { v: 'onibus', label: 'Ônibus' },
   { v: 'carro', label: 'Carro' },
   { v: 'transfer', label: 'Transfer / Uber' },
   { v: 'hotel', label: 'Hospedagem' },
+  { v: 'tarefa', label: 'Tarefas' },
   { v: 'outro', label: 'Outros' },
 ]
 
@@ -103,6 +116,9 @@ export default function AgendaPage() {
   const [vistorias, setVistorias] = useState<VistoriaResumo[]>([])
   const [imoveis, setImoveis] = useState<Imovel[]>([])
   const [cronograma, setCronograma] = useState<ItemCronograma[]>([])
+  // Prazos dos processos (comunique-se, validade de documento) — a agenda é o
+  // lugar onde eles têm de aparecer junto do resto.
+  const [prazos, setPrazos] = useState<Prazo[]>([])
   const [usuarios, setUsuarios] = useState<{ id: number; name: string }[]>([])
   const [carregando, setCarregando] = useState(true)
 
@@ -128,6 +144,7 @@ export default function AgendaPage() {
     Promise.all([
       api.get<{ data: VistoriaResumo[] }>('/vistorias').then((r) => setVistorias(r.data)),
       api.get<{ data: ItemCronograma[] }>('/cronograma?dias=365').then((r) => setCronograma(r.data)),
+      api.get<{ data: Prazo[] }>('/prazos?dias=365').then((r) => setPrazos(r.data)).catch(() => {}),
     ]).finally(() => setCarregando(false))
   }
   useEffect(() => {
@@ -161,18 +178,36 @@ export default function AgendaPage() {
       }))
     const dosItens: Evento[] = cronograma.map((it) => ({
       chave: `i-${it.id}`,
-      data: it.inicio.slice(0, 10),
+      // Dia LOCAL: o ISO vem em UTC e um item às 21h cairia no dia seguinte.
+      data: iso(new Date(it.inicio)),
       hora: new Date(it.inicio).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       tipo: it.tipo,
       titulo: it.titulo,
       detalhe: [it.viagemTitulo, it.clientes, it.codigo].filter(Boolean).join(' · '),
       responsavelId: it.responsavelId,
       responsavelNome: it.responsavelNome,
-      cor: 'bg-zinc-200 text-zinc-900',
+      cor: it.tipo === 'tarefa' ? 'bg-amber-100 text-amber-900' : 'bg-zinc-200 text-zinc-900',
       destino: it.destino,
+      itemId: it.id,
+      viagemId: it.viagemId,
+      concluido: it.concluido,
+      obs: it.obs,
     }))
-    return [...dasVistorias, ...dosItens]
-  }, [vistorias, cronograma])
+    const dosPrazos: Evento[] = prazos.map((p) => ({
+      chave: `p-${p.chave}`,
+      data: p.data,
+      hora: '',
+      tipo: 'prazo',
+      titulo: p.titulo,
+      detalhe: `${p.processoNumero} · ${p.clienteNome}`,
+      responsavelId: p.responsavelId,
+      responsavelNome: null,
+      // Vencido grita; prazo normal fica em vermelho claro.
+      cor: p.vencido ? 'bg-primary text-primary-foreground' : 'bg-primary/15 text-primary ring-1 ring-primary/40',
+      destino: p.link,
+    }))
+    return [...dasVistorias, ...dosItens, ...dosPrazos]
+  }, [vistorias, cronograma, prazos])
 
   // Filtros (responsável, tipo e texto) valem para o calendário e para a lista.
   const filtrados = useMemo(() => {
@@ -198,7 +233,7 @@ export default function AgendaPage() {
     return filtrados
       .filter((e) => e.data >= hojeStr)
       .sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora))
-      .slice(0, 30)
+      .slice(0, 60)
   }, [filtrados]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const semDataMarcada = useMemo(
@@ -248,7 +283,19 @@ export default function AgendaPage() {
     }
   }
 
+  const marcarTarefa = async (e: Evento) => {
+    if (!e.itemId) return
+    const concluido = !e.concluido
+    setCronograma((lista) => lista.map((it) => (it.id === e.itemId ? { ...it, concluido } : it)))
+    await api.put(`/viagem-itens/${e.itemId}`, { concluido }).catch(() => carregar())
+  }
+
+  // Prazo abre o processo; trecho/tarefa abre o item na viagem.
+  const linkDo = (e: Evento) =>
+    e.tipo === 'prazo' ? e.destino : e.itemId ? `/viagens/${e.viagemId}?item=${e.itemId}` : ''
+
   const hojeIso = iso(hoje)
+  const doDiaAberto = diaParam ? porDia.get(diaParam) || [] : []
   const temFiltro = !!(busca || responsavel || tipo)
 
   return (
@@ -260,7 +307,7 @@ export default function AgendaPage() {
             {nomeResponsavel && <span className="text-base font-normal text-muted-foreground">· {nomeResponsavel}</span>}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Vistorias e trechos de viagem no mesmo calendário. Clique num dia para agendar.
+            Vistorias, prazos dos processos e trechos de viagem no mesmo calendário. Clique num dia para agendar.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -362,7 +409,7 @@ export default function AgendaPage() {
                   {doDia.slice(0, 3).map((e) => (
                     <span
                       key={e.chave}
-                      className={`truncate rounded px-1.5 py-0.5 text-[11px] leading-tight ${e.cor}`}
+                      className={`truncate rounded px-1.5 py-0.5 text-[11px] leading-tight ${e.cor} ${e.concluido ? 'line-through opacity-60' : ''}`}
                       title={`${e.hora ? e.hora + ' · ' : ''}${e.titulo} — ${e.detalhe}${
                         e.responsavelNome ? ` · ${e.responsavelNome}` : ''
                       }`}
@@ -388,7 +435,7 @@ export default function AgendaPage() {
         <CardContent className="p-4">
           <p className="mb-1 text-sm font-medium">Próximos compromissos</p>
           <p className="mb-3 text-xs text-muted-foreground">
-            Vistorias e trechos de viagem, na ordem em que acontecem.
+            Vistorias, prazos de protocolo e documento e trechos de viagem, na ordem em que acontecem.
           </p>
           {proximos.length === 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -398,14 +445,32 @@ export default function AgendaPage() {
             <ul className="divide-y">
               {proximos.map((e) => {
                 const Icon = ICONE[e.tipo] || CalendarDays
+                const link = linkDo(e)
                 return (
-                  <li key={e.chave} className="flex flex-wrap items-center gap-3 py-2 text-sm">
+                  <li
+                    key={e.chave}
+                    className={`flex flex-wrap items-center gap-3 py-2 text-sm ${link ? 'cursor-pointer hover:bg-accent/50' : ''} ${
+                      e.concluido ? 'opacity-60' : ''
+                    }`}
+                    onClick={() => link && router.push(link)}
+                  >
                     <span className="w-24 shrink-0 text-xs text-muted-foreground">
                       {e.data.split('-').reverse().slice(0, 2).join('/')}
                       {e.hora ? ` ${e.hora}` : ''}
                     </span>
-                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">
+                    {e.tipo === 'tarefa' ? (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 accent-primary"
+                        checked={!!e.concluido}
+                        onClick={(ev) => ev.stopPropagation()}
+                        onChange={() => marcarTarefa(e)}
+                        aria-label={e.concluido ? 'Desmarcar tarefa' : 'Marcar tarefa como feita'}
+                      />
+                    ) : (
+                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className={`min-w-0 flex-1 truncate ${e.concluido ? 'line-through' : ''}`} title={e.obs || undefined}>
                       {e.titulo}
                       <span className="text-muted-foreground"> · {e.detalhe}</span>
                     </span>
@@ -440,25 +505,65 @@ export default function AgendaPage() {
         </Card>
       )}
 
-      {/* Agendar vistoria no dia escolhido */}
+      {/* Dia escolhido: compromissos do dia, um por linha, e o agendamento de vistoria */}
       <Dialog open={!!diaParam} onOpenChange={(o) => !o && setDiaParam(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Agendar vistoria — {diaParam ? diaParam.split('-').reverse().join('/') : ''}</DialogTitle>
+            <DialogTitle>
+              {diaParam
+                ? `${DIAS[new Date(`${diaParam}T12:00`).getDay()]}, ${diaParam.split('-').reverse().join('/')}`
+                : ''}
+            </DialogTitle>
           </DialogHeader>
 
-          {diaParam && (porDia.get(diaParam)?.length ?? 0) > 0 && (
-            <div className="rounded-md border bg-muted/30 p-2 text-sm">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">Já neste dia:</p>
-              {porDia.get(diaParam)!.map((e) => (
-                <p key={e.chave} className="truncate text-sm">
-                  {e.hora ? `${e.hora} · ` : ''}
-                  {e.titulo} <span className="text-muted-foreground">— {e.detalhe}</span>
-                </p>
-              ))}
+          {doDiaAberto.length > 0 && (
+            <div className="min-w-0">
+              <p className="mb-1 text-sm font-medium">
+                {doDiaAberto.length} compromisso(s) neste dia
+              </p>
+              <ul className="divide-y rounded-md border">
+                {doDiaAberto.map((e) => {
+                  const Icon = ICONE[e.tipo] || CalendarDays
+                  const link = linkDo(e)
+                  return (
+                    <li
+                      key={e.chave}
+                      className={`flex items-start gap-3 px-3 py-2 text-sm ${link ? 'cursor-pointer hover:bg-accent/50' : ''} ${
+                        e.concluido ? 'opacity-60' : ''
+                      }`}
+                      onClick={() => link && router.push(link)}
+                    >
+                      <span className="w-11 shrink-0 pt-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+                        {e.hora || '—'}
+                      </span>
+                      {e.tipo === 'tarefa' ? (
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                          checked={!!e.concluido}
+                          onClick={(ev) => ev.stopPropagation()}
+                          onChange={() => marcarTarefa(e)}
+                          aria-label={e.concluido ? 'Desmarcar tarefa' : 'Marcar tarefa como feita'}
+                        />
+                      ) : (
+                        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className={`block font-medium ${e.concluido ? 'line-through' : ''}`}>{e.titulo}</span>
+                        {e.obs && <span className="block whitespace-pre-line text-xs">{e.obs}</span>}
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {e.detalhe}
+                          {e.responsavelNome ? ` · ${e.responsavelNome}` : ''}
+                        </span>
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           )}
 
+          <p className="border-t pt-4 text-sm font-medium">Agendar vistoria neste dia</p>
           <form onSubmit={criar} className="space-y-4">
             <div className="space-y-1.5">
               <Label>Imóvel</Label>

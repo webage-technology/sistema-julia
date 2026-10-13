@@ -4,13 +4,18 @@
 // cliente ou de clientes diferentes). Guarda o cronograma (voo, ônibus, hotel,
 // traslados), a verba e a prestação de contas com comprovantes.
 //
+// A verba é o dinheiro que o escritório adianta ao analista para ele conseguir
+// fazer a vistoria: tantos dias em campo, tanto de almoço, Uber e afins. A tela
+// /financeiro (rota no fim deste arquivo) é a visão do escritório sobre esse
+// adiantamento — quanto saiu, quanto voltou comprovado na planilha de despesas.
+//
 // Notificação: o cronograma é exportado como **calendário (.ics)**. Os itens
 // marcados com "avisar" levam alarme — o celular notifica sozinho, offline e
 // sem o sistema aberto.
 const express = require('express')
 const fs = require('node:fs')
 const db = require('./db')
-const { authMiddleware } = require('./auth')
+const { authMiddleware, permitir, PAPEIS_FINANCEIRO } = require('./auth')
 const fatura = require('./fatura')
 const { upload, absPath, salvarComprovante, salvarFatura, removerArquivo, nomeOriginal } = require('./uploads')
 
@@ -23,11 +28,13 @@ const h = (fn) => (req, res) =>
     if (!res.headersSent) res.status(500).json({ success: false, message: 'Erro interno' })
   })
 
-const TIPOS = ['voo', 'onibus', 'carro', 'hotel', 'transfer', 'vistoria', 'outro']
+// "tarefa" é o que não é trecho: levar EPI, perguntar o horário do almoço,
+// fazer o checkout. Tem `concluido`, marcado na viagem e na agenda.
+const TIPOS = ['voo', 'onibus', 'carro', 'hotel', 'transfer', 'vistoria', 'tarefa', 'outro']
 const CATEGORIAS = ['passagem', 'hospedagem', 'transporte', 'alimentacao', 'outro']
 
 const ITEM_COLS = `id, viagem_id AS "viagemId", tipo, titulo, inicio, fim, origem, destino, codigo,
-  valor::float8 AS valor, notificar, lembrete_min AS "lembreteMin", obs`
+  valor::float8 AS valor, notificar, lembrete_min AS "lembreteMin", obs, concluido`
 const DESPESA_COLS = `id, viagem_id AS "viagemId", vistoria_id AS "vistoriaId", categoria, descricao,
   valor::float8 AS valor, to_char(data, 'YYYY-MM-DD') AS data, arquivo <> '' AS "temComprovante",
   nome_original AS "nomeOriginal"`
@@ -246,8 +253,8 @@ router.post(
       return res.status(422).json({ success: false, message: 'Descreva o item (ex.: “Voo GRU → CGB”)' })
     }
     const { rows } = await db.query(
-      `INSERT INTO viagem_itens (viagem_id, tipo, titulo, inicio, fim, origem, destino, codigo, valor, notificar, lembrete_min, obs)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING ${ITEM_COLS}`,
+      `INSERT INTO viagem_itens (viagem_id, tipo, titulo, inicio, fim, origem, destino, codigo, valor, notificar, lembrete_min, obs, concluido)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING ${ITEM_COLS}`,
       [
         id,
         TIPOS.includes(b.tipo) ? b.tipo : 'outro',
@@ -261,6 +268,7 @@ router.post(
         b.notificar !== false,
         Number(b.lembreteMin) >= 0 ? Number(b.lembreteMin) : 120,
         b.obs || '',
+        !!b.concluido,
       ]
     )
     res.json({ success: true, data: rows[0] })
@@ -277,7 +285,7 @@ router.put(
     const b = req.body || {}
     const { rows } = await db.query(
       `UPDATE viagem_itens SET tipo=$1, titulo=$2, inicio=$3, fim=$4, origem=$5, destino=$6, codigo=$7,
-        valor=$8, notificar=$9, lembrete_min=$10, obs=$11 WHERE id=$12 RETURNING ${ITEM_COLS}`,
+        valor=$8, notificar=$9, lembrete_min=$10, obs=$11, concluido=$12 WHERE id=$13 RETURNING ${ITEM_COLS}`,
       [
         TIPOS.includes(b.tipo) ? b.tipo : a.tipo,
         String(b.titulo ?? a.titulo).trim() || a.titulo,
@@ -290,6 +298,7 @@ router.put(
         'notificar' in b ? !!b.notificar : a.notificar,
         'lembreteMin' in b ? Number(b.lembreteMin) || 0 : a.lembrete_min,
         b.obs ?? a.obs,
+        'concluido' in b ? !!b.concluido : a.concluido,
         id,
       ]
     )
@@ -572,7 +581,7 @@ router.get(
     const dias = Math.min(Math.max(Number(req.query.dias || 60), 1), 365)
     const { rows } = await db.query(
       `SELECT it.id, it.tipo, it.titulo, it.inicio, it.fim, it.origem, it.destino, it.codigo,
-        it.valor::float8 AS valor, it.notificar, v.id AS "viagemId",
+        it.valor::float8 AS valor, it.notificar, it.obs, it.concluido, v.id AS "viagemId",
         COALESCE(NULLIF(v.titulo, ''), v.destino, 'Viagem') AS "viagemTitulo",
         v.responsavel_id AS "responsavelId", u.name AS "responsavelNome",
         (SELECT string_agg(DISTINCT ${db.CLIENTE_NOME}, ', ') FROM viagem_vistorias vv
@@ -593,6 +602,150 @@ router.get(
       [String(dias)]
     )
     res.json({ success: true, data: rows })
+  })
+)
+
+// ------------------------------------------------------------- financeiro
+// A verba da viagem pela ótica do escritório: quanto foi disponibilizado a cada
+// analista para ir a campo, quantos dias ele ficou fora, quanto já voltou
+// comprovado (alimentação, transporte/Uber, hospedagem, passagem) e quanto
+// ainda falta prestar contas. É a mesma base da planilha de despesas de viagem
+// (/viagens/:id/relatorio.xlsx), só que somada por viagem e por analista.
+const CATEGORIA_LABEL = {
+  passagem: 'Passagem',
+  hospedagem: 'Hospedagem',
+  transporte: 'Transporte (Uber, táxi, ônibus)',
+  alimentacao: 'Alimentação',
+  outro: 'Outros',
+}
+
+// As colunas da planilha de despesas da Julia (templates/relatorio-despesas.xlsx).
+// O Financeiro mostra o gasto já separado por elas, para bater com o arquivo.
+const PLANILHA_LABEL = {
+  metro: 'Metrô',
+  uber: 'Uber / táxi',
+  onibus: 'Ônibus',
+  aliment: 'Alimentação',
+  correio: 'Correio',
+  taxas: 'Taxas',
+  terceiros: 'Terceiros (passagem, hotel…)',
+}
+
+router.get(
+  '/financeiro',
+  permitir(...PAPEIS_FINANCEIRO, 'arquiteto'),
+  h(async (req, res) => {
+    const inicio = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.inicio || '')) ? req.query.inicio : null
+    const fim = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.fim || '')) ? req.query.fim : null
+    const responsavelId = Number(req.query.responsavelId) || null
+
+    const { rows } = await db.query(
+      `SELECT ${VIAGEM_COLS},
+        CASE WHEN v.inicio IS NULL THEN NULL
+             ELSE (COALESCE(v.fim, v.inicio) - v.inicio + 1) END AS dias,
+        (SELECT COUNT(*)::int FROM viagem_vistorias vv WHERE vv.viagem_id = v.id) AS vistorias,
+        (SELECT string_agg(DISTINCT ${db.CLIENTE_NOME}, ', ') FROM viagem_vistorias vv
+          JOIN vistorias vi ON vi.id = vv.vistoria_id
+          JOIN imoveis i ON i.id = vi.imovel_id
+          JOIN clients c ON c.id = i.client_id
+          WHERE vv.viagem_id = v.id) AS clientes,
+        g.gasto, g.passagem, g.hospedagem, g.transporte, g.alimentacao, g.outro,
+        g.despesas, g."semComprovante"
+       FROM viagens v
+       LEFT JOIN users u ON u.id = v.responsavel_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(d.valor), 0)::float8 AS gasto,
+           COALESCE(SUM(d.valor) FILTER (WHERE d.categoria = 'passagem'), 0)::float8 AS passagem,
+           COALESCE(SUM(d.valor) FILTER (WHERE d.categoria = 'hospedagem'), 0)::float8 AS hospedagem,
+           COALESCE(SUM(d.valor) FILTER (WHERE d.categoria = 'transporte'), 0)::float8 AS transporte,
+           COALESCE(SUM(d.valor) FILTER (WHERE d.categoria = 'alimentacao'), 0)::float8 AS alimentacao,
+           COALESCE(SUM(d.valor) FILTER (WHERE d.categoria = 'outro'), 0)::float8 AS outro,
+           COUNT(*)::int AS despesas,
+           (COUNT(*) FILTER (WHERE d.arquivo = ''))::int AS "semComprovante"
+         FROM despesas d WHERE d.viagem_id = v.id
+       ) g ON TRUE
+       WHERE ($1::date IS NULL OR COALESCE(v.fim, v.inicio, v.created_at::date) >= $1)
+         AND ($2::date IS NULL OR COALESCE(v.inicio, v.created_at::date) <= $2)
+         AND ($3::int IS NULL OR v.responsavel_id = $3)
+       ORDER BY COALESCE(v.inicio, v.created_at::date) DESC, v.id DESC
+       LIMIT 500`,
+      [inicio, fim, responsavelId]
+    )
+
+    const hoje = new Date().toISOString().slice(0, 10)
+    const viagens = rows.map((v) => {
+      const verba = Number(v.verba) || 0
+      const gasto = Number(v.gasto) || 0
+      const dias = v.dias == null ? null : Math.max(1, Number(v.dias))
+      // Encerrada é a viagem que já voltou: é dela que se cobra a prestação de contas.
+      const encerrada = !!(v.fim || v.inicio) && String(v.fim || v.inicio) < hoje
+      return {
+        ...v,
+        verba,
+        gasto,
+        dias,
+        saldo: verba - gasto,
+        // O "valor do dia" do analista: verba dividida pelos dias em campo.
+        porDia: dias ? verba / dias : null,
+        // Viagem encerrada com saldo é viagem que ainda não prestou contas.
+        encerrada,
+      }
+    })
+
+    // Gasto separado pelas colunas da planilha (regra fixa; a IA só entra na
+    // hora de gerar o arquivo, onde ela lê a descrição de cada lançamento).
+    const { colunaPorRegra } = require('./relatorio')
+    const planilha = { metro: 0, uber: 0, onibus: 0, aliment: 0, correio: 0, taxas: 0, terceiros: 0 }
+    const ids = rows.map((v) => v.id)
+    if (ids.length) {
+      const desp = await db.query(
+        'SELECT categoria, descricao, valor::float8 AS valor FROM despesas WHERE viagem_id = ANY($1::int[])',
+        [ids]
+      )
+      for (const dsp of desp.rows) planilha[colunaPorRegra(dsp)] += Number(dsp.valor || 0)
+    }
+
+    const soma = (lista, campo) => lista.reduce((s, x) => s + Number(x[campo] || 0), 0)
+    const porAnalista = []
+    for (const v of viagens) {
+      const chave = v.responsavelId || 0
+      let a = porAnalista.find((x) => x.responsavelId === chave)
+      if (!a) {
+        a = { responsavelId: chave, nome: v.responsavelNome || 'Sem responsável', viagens: 0, dias: 0, verba: 0, gasto: 0, saldo: 0 }
+        porAnalista.push(a)
+      }
+      a.viagens += 1
+      a.dias += v.dias || 0
+      a.verba += v.verba
+      a.gasto += v.gasto
+      a.saldo += v.saldo
+    }
+    porAnalista.sort((x, y) => y.verba - x.verba)
+
+    res.json({
+      success: true,
+      data: {
+        viagens,
+        porAnalista,
+        categorias: CATEGORIA_LABEL,
+        planilha,
+        planilhaLabels: PLANILHA_LABEL,
+        totais: {
+          verba: soma(viagens, 'verba'),
+          gasto: soma(viagens, 'gasto'),
+          saldo: soma(viagens, 'verba') - soma(viagens, 'gasto'),
+          dias: soma(viagens, 'dias'),
+          aPrestar: soma(viagens.filter((v) => v.encerrada && v.saldo > 0), 'saldo'),
+          excedido: soma(viagens.filter((v) => v.saldo < 0), 'saldo'),
+          alimentacao: soma(viagens, 'alimentacao'),
+          transporte: soma(viagens, 'transporte'),
+          hospedagem: soma(viagens, 'hospedagem'),
+          passagem: soma(viagens, 'passagem'),
+          outro: soma(viagens, 'outro'),
+          semComprovante: soma(viagens, 'semComprovante'),
+        },
+      },
+    })
   })
 )
 

@@ -379,12 +379,17 @@ function limparAntigas() {
 function iniciarLeitura(imovelId, entrada, opcoes = {}) {
   limparAntigas()
   for (const [id, l] of leituras) {
-    if (l.imovelId === imovelId && l.status === 'processando') return id
+    if (l.imovelId === imovelId && l.status === 'processando' && !!l.visual === !!opcoes.visual) return id
   }
   const id = proximaLeitura++
-  const registro = { imovelId, status: 'processando', inicio: Date.now(), fim: 0, dados: null, mensagem: '' }
+  const registro = { imovelId, visual: !!opcoes.visual, status: 'processando', inicio: Date.now(), fim: 0, dados: null, mensagem: '' }
   leituras.set(id, registro)
-  sugerirEstrutura(entrada, opcoes)
+  // Leitura VISUAL (planta escaneada / fontes em curvas): as pranchas viram
+  // imagem e vão ao Claude com visão — mesmo formato de resposta.
+  const trabalho = opcoes.visual
+    ? require('./planta-pinos').sugerirPorVisao(imovelId, entrada, opcoes)
+    : sugerirEstrutura(entrada, opcoes)
+  trabalho
     .then((dados) => Object.assign(registro, { status: 'ok', dados, fim: Date.now() }))
     .catch((err) => {
       console.error('[planta] leitura %d falhou: %s', id, err.message)

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Camera, Plus, Search } from 'lucide-react'
+import { Camera, FolderUp, Plus, Search } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useParamEstado, useTitulo } from '@/lib/url'
 import {
@@ -13,6 +13,7 @@ import {
   TIPOS_SERVICO,
   VistoriaResumo,
   filtrarPorTexto,
+  useTiposServico,
 } from '@/lib/vistorias'
 import { ABAS_VISTORIAS, Abas } from '@/components/abas'
 import { Button } from '@/components/ui/button'
@@ -27,13 +28,19 @@ export default function VistoriasPage() {
   const [rows, setRows] = useState<VistoriaResumo[]>([])
   const [imoveis, setImoveis] = useState<Imovel[]>([])
   const [loading, setLoading] = useState(true)
+  const tipos = useTiposServico()
   const [form, setForm] = useState({ imovelId: '', tipoServico: TIPOS_SERVICO[0], dataVistoria: '' })
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   // O formulário de criação tem endereço próprio: /vistorias?nova=1
+  // Importar é o MESMO formulário (a vistoria precisa existir para receber as
+  // fotos) — muda só para onde se vai depois de criar: /vistorias?importar=1
   const [nova, setNova] = useParamEstado('nova')
-  const open = nova === '1'
-  useTitulo(open ? 'Nova vistoria' : 'Vistorias')
+  const [importar, setImportar] = useParamEstado('importar')
+  const importando = importar === '1'
+  const open = nova === '1' || importando
+  const fechar = () => (importando ? setImportar(null) : setNova(null))
+  useTitulo(open ? (importando ? 'Importar vistoria' : 'Nova vistoria') : 'Vistorias')
   const [busca, setBusca] = useParamEstado('busca')
   const visiveis = useMemo(
     () =>
@@ -43,6 +50,7 @@ export default function VistoriasPage() {
         v.tipoServico,
         STATUS_LABEL[v.status],
         `#${v.id}`,
+        v.processoNumero,
       ]),
     [rows, busca]
   )
@@ -71,7 +79,7 @@ export default function VistoriasPage() {
         ...form,
         dataVistoria: form.dataVistoria || null,
       })
-      router.push(`/vistorias/${r.data.id}`)
+      router.push(importando ? `/vistorias/${r.data.id}/importar` : `/vistorias/${r.data.id}`)
     } catch (err: any) {
       setError(err?.message || 'Erro ao criar')
       setSaving(false)
@@ -92,6 +100,10 @@ export default function VistoriasPage() {
           </Button>
           <Button variant="outline" onClick={() => setNova('1')}>
             <Plus className="h-4 w-4" /> Nova vistoria
+          </Button>
+          {/* Vistoria que já foi a campo: as fotos já existem no computador. */}
+          <Button variant="outline" onClick={() => setImportar('1')}>
+            <FolderUp className="h-4 w-4" /> Importar vistoria
           </Button>
         </span>
       </div>
@@ -114,6 +126,7 @@ export default function VistoriasPage() {
               <TableHead>Imóvel</TableHead>
               <TableHead>Cliente</TableHead>
               <TableHead>Tipo</TableHead>
+              <TableHead>Processo</TableHead>
               <TableHead>Data</TableHead>
               <TableHead className="text-center">Fotos</TableHead>
               <TableHead>Status</TableHead>
@@ -122,13 +135,13 @@ export default function VistoriasPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   Carregando…
                 </TableCell>
               </TableRow>
             ) : visiveis.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   {busca
                     ? `Nenhuma vistoria encontrada para “${busca}”.`
                     : 'Nenhuma vistoria — crie a primeira em “Nova vistoria”.'}
@@ -141,6 +154,7 @@ export default function VistoriasPage() {
                   <TableCell>{v.imovelNome}</TableCell>
                   <TableCell className="text-muted-foreground">{v.clienteNome}</TableCell>
                   <TableCell className="text-muted-foreground">{v.tipoServico || '—'}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{v.processoNumero || '—'}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {v.dataVistoria ? v.dataVistoria.split('-').reverse().join('/') : '—'}
                   </TableCell>
@@ -157,12 +171,18 @@ export default function VistoriasPage() {
         </Table>
       </Card>
 
-      <Dialog open={open} onOpenChange={(o) => !o && setNova(null)}>
+      <Dialog open={open} onOpenChange={(o) => !o && fechar()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Nova vistoria</DialogTitle>
+            <DialogTitle>{importando ? 'Importar vistoria já realizada' : 'Nova vistoria'}</DialogTitle>
           </DialogHeader>
           <form onSubmit={criar} className="space-y-4">
+            {importando && (
+              <p className="text-sm text-muted-foreground">
+                Identifique a vistoria que já foi a campo. No passo seguinte você escolhe a pasta com as fotos — as
+                subpastas viram os pavimentos e ambientes.
+              </p>
+            )}
             <div className="space-y-1.5">
               <Label>Imóvel</Label>
               <select
@@ -190,13 +210,13 @@ export default function VistoriasPage() {
                   value={form.tipoServico}
                   onChange={(e) => setForm({ ...form, tipoServico: e.target.value })}
                 >
-                  {TIPOS_SERVICO.map((t) => (
+                  {tipos.map((t) => (
                     <option key={t}>{t}</option>
                   ))}
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label>Data prevista</Label>
+                <Label>{importando ? 'Data em que foi feita' : 'Data prevista'}</Label>
                 <Input
                   type="date"
                   value={form.dataVistoria}
@@ -206,11 +226,11 @@ export default function VistoriasPage() {
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setNova(null)}>
+              <Button type="button" variant="outline" onClick={fechar}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={saving}>
-                {saving ? 'Criando…' : 'Criar vistoria'}
+                {saving ? 'Criando…' : importando ? 'Continuar para as fotos' : 'Criar vistoria'}
               </Button>
             </DialogFooter>
           </form>

@@ -47,7 +47,7 @@ export default function ViagensPage() {
   const [form, setForm] = useState({ titulo: '', destino: '', inicio: '', fim: '', verba: '', responsavelId: '' })
   const [erro, setErro] = useState<string | null>(null)
   const [salvando, setSalvando] = useState(false)
-  useTitulo(nova === '1' ? 'Nova viagem' : 'Viagens')
+  useTitulo(nova === '1' ? 'Nova viagem' : 'Cronograma')
 
   useEffect(() => {
     api
@@ -88,10 +88,10 @@ export default function ViagensPage() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
-            <Plane className="h-6 w-6" /> Viagens
+            <Plane className="h-6 w-6" /> Cronograma de viagens
           </h1>
           <p className="text-sm text-muted-foreground">
-            Uma viagem cobre várias vistorias — cronograma, verba e comprovantes em um lugar só.
+            Cada ida a campo cobre várias vistorias — trechos (voo, hotel, traslado), verba do analista e comprovantes em um lugar só.
           </p>
         </div>
         <Button onClick={() => setNova('1')}>
